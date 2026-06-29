@@ -5,6 +5,7 @@ It uses only local project data and writes:
 
 # Import the packages used for tabular, spatial, PDF, and file processing.
 from pathlib import Path
+import datetime
 
 import numpy as np
 import pandas as pd
@@ -28,6 +29,7 @@ RELATIONSHIP_DIR = GEOGRAPHY_DIR / "GeographicRelationshipFiles"
 FURMAN_DIR = RAW_DIR / "FC_Subsidized_Housing_Database_2025-05-13"
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
 OUTPUT_PATH = CLEAN_DIR / "housing_and_affordability.csv"
+LOG_PATH = CLEAN_DIR / "housing_and_affordability_log.txt"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -522,55 +524,39 @@ clean["subsidized_units_expiring_2025_2030_cd_context"] = expiration_2025_2030_c
 clean["subsidized_units_expiring_2031_2040_cd_context"] = expiration_2031_2040_cd
 clean["subsidized_units_expiring_2041_later_cd_context"] = expiration_2041_later_cd
 
-# Add explicit geography and availability flags instead of fabricating tract data.
-clean["tract_universe_flag"] = (
-    "Official DCP 2020 tract-NTA-CDTA crosswalk; CDTACode=MN03"
-)
-clean["point_assignment_method"] = (
+# Write geography and data-availability notes to a sidecar log instead of
+# repeating identical text across all 31 rows.
+log_lines = [
+    "CB3 Housing & Affordability — Build Log",
+    f"Generated: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+    f"Output:    {OUTPUT_PATH}",
+    "",
+    "=== Tract Universe ===",
+    "Official DCP 2020 tract-NTA-CDTA crosswalk; CDTACode=MN03",
+    "",
+    "=== Point Assignment Method ===",
     "Coordinates spatially joined to local 2020 census tract polygons; "
-    "unambiguous source tract used only as fallback"
-)
-clean["hpd_violations_geography_flag"] = (
-    f"{hpd_unallocated_count} valid Manhattan CB3 HPD records were not allocated"
-)
-clean["subsidized_housing_geography_flag"] = (
-    f"Property coordinates spatially joined to 2020 tracts; "
-    f"{furman_bbl_unallocated_count} BBL records not allocated; "
-    "published CD expiration totals are retained separately as context"
-)
-clean["executed_evictions_geography_flag"] = (
-    "Coordinates spatially joined to 2020 tracts; "
-    f"{eviction_unallocated_count} residential records not allocated"
-)
-clean["indoor_complaints_geography_flag"] = (
-    "Coordinates spatially joined to 2020 tracts; "
-    f"{indoor_unallocated_count} CB3-labelled records were not allocated"
-)
-clean["nycha_violations_geography_flag"] = (
-    "Coordinates spatially joined to 2020 tracts; "
-    f"{nycha_unallocated_count} MN03 NYCHA records were not allocated"
-)
-clean["eviction_filings_geography_flag"] = (
-    "Community-district trend only; 2024 value repeated as CD context, not a tract metric"
-)
-clean["supportive_housing_status"] = (
-    "Primary DSS/OSH supportive-housing file unavailable; no tract metric produced"
-)
-clean["new_construction_ami_status"] = (
-    "Local Furman file supports recent construction counts but has no defensible AMI band"
-)
-clean["hpd_ll44_status"] = (
-    "HPD Local Law 44 project and unit-income files unavailable"
-)
-clean["senior_walkup_status"] = (
-    "MapPLUTO elevator and BIS inspection files unavailable"
-)
-clean["chp_2022_geography_flag"] = (
-    "PUMA/sub-borough survey context only; not allocated to tracts"
-)
-clean["tenant_legal_services_geography_flag"] = (
-    "PDF address list is not a tract metric and was not manually geocoded"
-)
+    "unambiguous source tract used only as fallback",
+    "",
+    "=== Geography ===",
+    f"HPD violations:        {hpd_unallocated_count} valid Manhattan CB3 HPD records not allocated to a tract",
+    f"Subsidized housing:    {furman_bbl_unallocated_count} BBL records not allocated; "
+    "published CD expiration totals retained as context columns",
+    f"Executed evictions:    {eviction_unallocated_count} residential records not allocated",
+    f"Indoor complaints:     {indoor_unallocated_count} CB3-labelled records not allocated",
+    f"NYCHA violations:      {nycha_unallocated_count} MN03 NYCHA records not allocated",
+    "Eviction filings:      Community-district trend only; 2024 value retained as CD context column",
+    "",
+    "=== Data Availability ===",
+    "Supportive housing:    Primary DSS/OSH file unavailable; no tract metric produced",
+    "New construction AMI:  Local Furman file has no defensible AMI-band field",
+    "HPD Local Law 44:      Project and unit-income files unavailable",
+    "Senior walkup units:   MapPLUTO elevator and BIS inspection files unavailable",
+    "CHP 2022:              PUMA/sub-borough survey context only; not allocated to tracts",
+    "Tenant legal services: PDF address list not converted to a tract metric",
+]
+LOG_PATH.write_text("\n".join(log_lines), encoding="utf-8")
+print(f"Wrote build log to {LOG_PATH}")
 
 # Sort columns and rows deterministically, then write the requested CSV.
 clean = clean.sort_values("GEOID").reset_index(drop=True)
