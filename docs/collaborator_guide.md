@@ -75,7 +75,7 @@ The output always has **31 rows** — one per official CB3 census tract — and 
 
 ## Step 1 — Add raw data
 
-Drop your source files into `data/raw/<Your Domain>/`. The Geography files are already in `data/raw/Geography/` and are shared across all domains.
+Drop your source files into `data/raw/<Your Domain>/`. The Geography files should be placed in `data/raw/Geography/` and are shared across all domains. Since we are not hosting any data on GitHub, please utilize the folders in the project's Sharepoint.
 
 ---
 
@@ -226,6 +226,6 @@ quarto render scripts/<your_domain>/maps.qmd
 
 - `src/cb3_utils.py` — shared tract universe and cleaning utilities
 - `src/map_utils.py` — shared Folium helpers
-- `src/demographic_profile_panel.py` — shared demographic profile panel
+- `src/demographic_profile_panel.py` — shared demographic profile panel (TBD if we want this)
 - `data/raw/Geography/` — shared geography files
-- Other domains' folders under `scripts/` and `data/raw/`
+- Other domains' folders under `scripts/` and `data/raw/` (Sharepoint)

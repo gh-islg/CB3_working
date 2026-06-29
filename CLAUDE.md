@@ -10,9 +10,10 @@ d. flag if the data is not already at the tract level (e.g., different geographi
 
 ### Code
 - Be parsimonious in your code; do not implement more than what I ask for.
+- Use # %% cell blocks throughout, so it can be run interactively in VS Code
 - Should be written in Python. Use `pandas` and `geopandas` to wrangle the data. Mapping should be done in `Folium` unless otherwise specified.
 - Write out all dependencies in a `requirements.txt`
-- Ccommented for each step/chunk of code. 
+- Add verbose comments for each chunk of code. Each function should have a docstring.
 
 ### Output
 - Clean data should go in data/clean/[domain].csv
