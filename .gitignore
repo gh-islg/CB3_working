@@ -1,0 +1,29 @@
+# Python virtual environment
+.venv/
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter / Quarto execution artifacts
+.ipynb_checkpoints/
+*_files/
+.quarto/
+
+# Local generated outputs
+maps/
+data/clean/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# leave data off GH
+data/
