@@ -1,5 +1,6 @@
 """Reusable Folium mapping helpers for CB3 project notebooks and scripts."""
 
+import json
 from pathlib import Path
 
 import branca.colormap as cm
@@ -223,3 +224,120 @@ def add_metric_layer(
             )
 
     return layer
+
+
+def add_dynamic_metric_legend(map_object, legend_payload, initial_metric_name, legend_id="metric-legend"):
+    """Inject a fixed-position legend that updates when the active base layer changes.
+
+    Parameters
+    ----------
+    map_object : folium.Map
+    legend_payload : dict
+        Keyed by metric dimension name (the layer-control label). Each value is a
+        dict with keys ``title``, ``subtitle``, and ``entries`` (list of
+        ``{"color": hex, "label": str}`` dicts).
+    initial_metric_name : str
+        The dimension name shown when the map first loads.
+    legend_id : str
+        CSS ``id`` for the legend ``<div>``. Use a unique value per page if multiple
+        dynamic legends could ever appear in the same HTML file.
+
+    Notes
+    -----
+    Folium initializes the Leaflet map variable in a ``<script>`` block placed
+    *after* ``</body>``, so any inline legend script that references the map
+    variable by name would throw a ``ReferenceError``. Both the ``baselayerchange``
+    event listener and the radio-input fallback are therefore deferred into a
+    ``setTimeout`` and the map is accessed via ``window["<var_name>"]`` to avoid
+    a hard reference error if the timeout fires before map initialization completes.
+    """
+    safe_id = legend_id.replace("-", "_")
+    js_data_var = f"cb3LegendData_{safe_id}"
+    js_fn_name = f"updateCb3Legend_{safe_id}"
+    map_var = map_object.get_name()
+
+    legend_html = f"""
+    <style>
+      #{legend_id} {{
+        position: fixed;
+        left: 50px;
+        bottom: 35px;
+        z-index: 9999;
+        width: 260px;
+        box-sizing: border-box;
+        padding: 10px 12px;
+        background: rgba(255,255,255,0.94);
+        border: 1px solid #777;
+        border-radius: 4px;
+        font-family: Arial, sans-serif;
+        color: #222;
+      }}
+      #{legend_id} .legend-title {{
+        font-size: 13px;
+        font-weight: 700;
+        margin-bottom: 3px;
+      }}
+      #{legend_id} .legend-subtitle {{
+        font-size: 11px;
+        line-height: 1.25;
+        color: #555;
+        margin-bottom: 8px;
+      }}
+      #{legend_id} .legend-row {{
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin: 4px 0;
+        font-size: 11px;
+      }}
+      #{legend_id} .legend-swatch {{
+        width: 15px;
+        height: 15px;
+        flex: 0 0 15px;
+        border: 1px solid #777;
+      }}
+    </style>
+    <div id="{legend_id}"></div>
+    <script>
+      const {js_data_var} = {json.dumps(legend_payload)};
+      function {js_fn_name}(metricName) {{
+        const legend = document.getElementById("{legend_id}");
+        const data = {js_data_var}[metricName];
+        if (!legend || !data) return;
+        const rows = data.entries.map(entry => `
+          <div class="legend-row">
+            <span class="legend-swatch" style="background:${{entry.color}}"></span>
+            <span>${{entry.label}}</span>
+          </div>
+        `).join("");
+        legend.innerHTML = `
+          <div class="legend-title">${{data.title}}</div>
+          <div class="legend-subtitle">${{data.subtitle}}</div>
+          ${{rows}}
+        `;
+      }}
+
+      {js_fn_name}({json.dumps(initial_metric_name)});
+
+      // Defer both the Leaflet event listener and the radio-input fallback until
+      // after the map variable is initialized (map init script runs after </body>).
+      setTimeout(function() {{
+        var mapObj = window["{map_var}"];
+        if (mapObj) {{
+          mapObj.on("baselayerchange", function(event) {{
+            {js_fn_name}(event.name);
+          }});
+        }}
+        document.querySelectorAll(".leaflet-control-layers-base label").forEach(function(label) {{
+          var input = label.querySelector("input[type='radio']");
+          var span = label.querySelector("span");
+          if (input && span) {{
+            input.addEventListener("change", function() {{
+              {js_fn_name}(span.textContent.trim());
+            }});
+          }}
+        }});
+      }}, 500);
+    </script>
+    """
+    map_object.get_root().html.add_child(folium.Element(legend_html))
