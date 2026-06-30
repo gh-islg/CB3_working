@@ -68,11 +68,15 @@ from src.map_utils import (
 # notebook works whether it is rendered from the root folder or from scripts/.
 PROJECT_DIR = find_project_dir()
 CLEAN_DATA_PATH = PROJECT_DIR / "data" / "clean" / "environment.csv"
+SECTIONS_DATA_PATH = PROJECT_DIR / "data" / "clean" / "environment_sections.csv"
 BASELINE_PROFILE_PATH = (
     PROJECT_DIR / "data" / "clean" / "cb3_tract_baseline_profile_clean.csv"
 )
 TRACT_GEOMETRY_PATH = (
     PROJECT_DIR / "data" / "raw" / "Geography" / "2020_Census_Tracts_20260505.geojson"
+)
+SECTIONS_GEOMETRY_PATH = (
+    PROJECT_DIR / "data" / "raw" / "Geography" / "DSNY_Sections_20260630.geojson"
 )
 MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "environment"
 MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -150,10 +154,23 @@ def _to_map_spec(meta, include_filename=False):
             spec[key] = meta[key]
     return spec
 
+# Tract-level environment metrics (excludes ej_area_flag and section-level metrics).
 METRIC_SPECS = {
     var: _to_map_spec(meta, include_filename=True)
     for var, meta in ALL_METRICS.items()
-    if meta["domain"] == "environment" and var != "ej_area_flag" and "filename" in meta
+    if (
+        meta["domain"] == "environment"
+        and var != "ej_area_flag"
+        and "filename" in meta
+        and not meta.get("geography", "").startswith("DSNY")
+    )
+}
+
+# Section-level sanitation metrics (DSNY cleaning sections, not census tracts).
+SECTION_METRIC_SPECS = {
+    var: _to_map_spec(meta, include_filename=True)
+    for var, meta in ALL_METRICS.items()
+    if meta.get("geography", "").startswith("DSNY") and "filename" in meta
 }
 
 DEMOGRAPHIC_SPECS = {
@@ -255,6 +272,65 @@ def create_single_metric_map(metric):
     output_path = MAP_OUTPUT_DIR / spec["filename"]
     map_object.save(output_path)
     return map_object
+
+
+# Load cleaning section geometry and averages for the section-level maps.
+# The DSNY sections geojson uses the 'section' column (MN031–MN034), which
+# matches the 'section' column in environment_sections.csv.
+sections_geometry = gpd.read_file(SECTIONS_GEOMETRY_PATH)
+sections_geometry = sections_geometry[sections_geometry["district"] == "MN03"][
+    ["section", "geometry"]
+].copy()
+sections_geometry = sections_geometry.to_crs("EPSG:4326")
+
+sections_metrics = pd.read_csv(SECTIONS_DATA_PATH)
+sections = sections_geometry.merge(sections_metrics, on="section", how="inner")
+assert len(sections) == 4, f"Expected 4 CB3 cleaning sections, got {len(sections)}"
+
+
+def create_section_map(metric):
+    """Create a choropleth map at the DSNY cleaning section level for one metric."""
+    spec = SECTION_METRIC_SPECS[metric]
+    values = sections[metric].astype(float)
+
+    colormap = make_step_colormap(values, spec["palette"], spec["label"])
+    colormap.caption = spec["label"]
+
+    map_object = make_base_map(sections)
+
+    display_field = f"{metric}_display"
+    layer_data = sections[["section", metric, "geometry"]].copy()
+    layer_data[display_field] = layer_data[metric].map(
+        lambda v: format_metric_value(v, spec["unit"])
+    )
+
+    folium.GeoJson(
+        data=layer_data.to_json(),
+        name=spec["dimension"],
+        style_function=lambda feature: {
+            "fillColor": colormap(feature["properties"][metric]),
+            "color": "#4d4d4d",
+            "weight": 1.5,
+            "fillOpacity": 0.75,
+        },
+        highlight_function=lambda _: {"weight": 3, "color": "#111", "fillOpacity": 0.88},
+        tooltip=folium.GeoJsonTooltip(
+            fields=["section", display_field],
+            aliases=["Cleaning section", spec["label"]],
+            sticky=False,
+        ),
+    ).add_to(map_object)
+
+    colormap.add_to(map_object)
+    add_map_title(
+        map_object,
+        f"CB3 Environmental Conditions: {spec['dimension']}",
+        spec["label"] + " — DSNY cleaning section level",
+    )
+
+    output_path = MAP_OUTPUT_DIR / spec["filename"]
+    map_object.save(output_path)
+    return map_object
 ```
 
 ## Separate maps
@@ -271,6 +347,20 @@ indoor_complaints_map
 ```{python}
 rodent_map = create_single_metric_map("rodent_active_inspections")
 rodent_map
+```
+
+### Street cleanliness (section level)
+
+```{python}
+streets_map = create_section_map("avg_acceptable_streets_pct")
+streets_map
+```
+
+### Sidewalk cleanliness (section level)
+
+```{python}
+sidewalks_map = create_section_map("avg_acceptable_sidewalks_pct")
+sidewalks_map
 ```
 
 ## Combined selectable-layer map
@@ -365,9 +455,11 @@ demographics_map
 ## Output validation
 
 ```{python}
-expected_map_files = [
-    MAP_OUTPUT_DIR / spec["filename"] for spec in METRIC_SPECS.values()
-] + [combined_output_path, profile_panel_output_path, demographics_output_path]
+expected_map_files = (
+    [MAP_OUTPUT_DIR / spec["filename"] for spec in METRIC_SPECS.values()]
+    + [MAP_OUTPUT_DIR / spec["filename"] for spec in SECTION_METRIC_SPECS.values()]
+    + [combined_output_path, profile_panel_output_path, demographics_output_path]
+)
 
 for map_file in expected_map_files:
     assert map_file.exists()

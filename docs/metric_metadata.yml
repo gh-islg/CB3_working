@@ -173,6 +173,45 @@ indoor_environmental_complaints:
   display_format: count
   filename: indoor_environmental_complaints.html
 
+avg_acceptable_streets_pct:
+  domain: environment
+  short_label: Street cleanliness
+  label: "Acceptable Streets % — 12-month average (Oct 2022–Aug 2023)"
+  description: >
+    Average monthly "Acceptable Streets %" scorecard rating across the 11 non-null
+    months from October 2022 through August 2023 (September 2023 is present in the
+    data but reported as null). Reported at the DSNY cleaning section level
+    (MN031–MN034), not census tract. Higher values indicate more block-faces rated
+    acceptably clean during DSNY inspections.
+  unit: "%"
+  palette: ["#ffffcc", "#c2e699", "#78c679", "#31a354", "#006837"]
+  source: DSNY Scorecard Ratings (NYC OpenData)
+  year: 2023
+  geography: DSNY cleaning section (MN031–MN034)
+  higher_is: better
+  map_classification: continuous
+  display_format: percent
+  filename: avg_acceptable_streets.html
+
+avg_acceptable_sidewalks_pct:
+  domain: environment
+  short_label: Sidewalk cleanliness
+  label: "Acceptable Sidewalks % — 12-month average (Oct 2022–Aug 2023)"
+  description: >
+    Average monthly "Acceptable Sidewalks %" scorecard rating across the 11 non-null
+    months from October 2022 through August 2023. Reported at the DSNY cleaning
+    section level (MN031–MN034), not census tract. Higher values indicate more
+    block-faces rated acceptably clean.
+  unit: "%"
+  palette: ["#ffffcc", "#c2e699", "#78c679", "#31a354", "#006837"]
+  source: DSNY Scorecard Ratings (NYC OpenData)
+  year: 2023
+  geography: DSNY cleaning section (MN031–MN034)
+  higher_is: better
+  map_classification: continuous
+  display_format: percent
+  filename: avg_acceptable_sidewalks.html
+
 indoor_air_quality_complaints:
   domain: environment
   short_label: Air quality complaints

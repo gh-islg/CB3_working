@@ -188,6 +188,50 @@ indoor_metrics = (
 #%%
 
 
+# Sanitation cleanliness (DSNY scorecard — section level)
+
+# Scorecard ratings are published at the DSNY cleaning section level (MN031-MN034),
+# not census tract. Average the latest 12 calendar months of available data,
+# skipping null rows (September 2023 is present but fully null).
+SECTIONS_OUTPUT_PATH = CLEAN_DIR / "environment_sections.csv"
+
+scorecard = pd.read_csv(RAW_DIR / "Scorecard_Ratings_20260420.csv", low_memory=False)
+scorecard_cb3 = scorecard[
+    scorecard["Borough"].eq("Manhattan") & scorecard["Community Board"].eq(3)
+].copy()
+scorecard_cb3["date"] = pd.to_datetime(scorecard_cb3["Month"], format="%Y / %m")
+
+latest_scorecard_date = scorecard_cb3["date"].max()
+scorecard_cutoff = latest_scorecard_date - pd.DateOffset(months=11)
+scorecard_recent = scorecard_cb3[scorecard_cb3["date"] >= scorecard_cutoff].copy()
+
+scorecard_n_months = int(
+    scorecard_recent.groupby("Cleaning Section")["Acceptable Streets %"]
+    .apply(lambda s: s.notna().sum())
+    .min()
+)
+
+scorecard_section_avgs = (
+    scorecard_recent.groupby("Cleaning Section", as_index=False)[
+        ["Acceptable Streets %", "Acceptable Sidewalks %"]
+    ]
+    .mean(numeric_only=True)
+    .rename(columns={
+        "Cleaning Section": "section",
+        "Acceptable Streets %": "avg_acceptable_streets_pct",
+        "Acceptable Sidewalks %": "avg_acceptable_sidewalks_pct",
+    })
+)
+scorecard_section_avgs = scorecard_section_avgs.round(1)
+
+scorecard_section_avgs.to_csv(SECTIONS_OUTPUT_PATH, index=False)
+print(
+    f"Wrote {len(scorecard_section_avgs)} cleaning sections "
+    f"({scorecard_n_months} non-null months averaged) to {SECTIONS_OUTPUT_PATH}"
+)
+#%%
+
+
 # Assemble and write the tract table
 
 # Left-join every tract-level metric to the 31-row base. Counts are filled with
@@ -253,9 +297,10 @@ log_lines = [
     "using the NTA-level disparity narrative with this build.",
     "",
     "=== Data Availability ===",
-    "Sanitation cleanliness: Scorecard ratings are reported by cleaning section "
-    "(MN031-MN034), not census tract, and no cleaning-section boundary file is "
-    "available locally to spatially join to tracts. Not yet included.",
+    f"Sanitation cleanliness: Reported at cleaning section level (MN031-MN034). "
+    f"Averaged over {scorecard_n_months} non-null months "
+    f"({scorecard_cutoff.strftime('%Y-%m')} to {latest_scorecard_date.strftime('%Y-%m')}). "
+    f"Written to environment_sections.csv; not included in tract-level environment.csv.",
     "Heat Vulnerability Index: reported by ZIP/ZCTA, not census tract. Deferred "
     "per request; not yet included.",
 ]
