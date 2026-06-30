@@ -6,6 +6,13 @@ It uses only local project data and writes:
 # Import the packages used for tabular, spatial, PDF, and file processing.
 from pathlib import Path
 import datetime
+import sys
+
+# Make src/ importable when running interactively in VS Code (# %% cells),
+# where the working directory may be the script folder rather than project root.
+_project_dir = Path(__file__).resolve().parents[2]
+if str(_project_dir) not in sys.path:
+    sys.path.insert(0, str(_project_dir))
 
 import numpy as np
 import pandas as pd
