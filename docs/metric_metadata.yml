@@ -1,223 +1,52 @@
-# CB3 Equity Report — metric metadata
-# One entry per output variable. Fields used by add_metric_layer() are marked (map).
-# All other fields are for documentation, filtering, and future tooling.
+# --- Economic Security & Food ---
 
-# --- Housing & Affordability ---
-
-severe_rent_burden_pct:
-  domain: housing_and_affordability
-  short_label: Severe rent burden       # (map) layer-control toggle label
-  label: Renters spending 50% or more of income on rent  # (map) tooltip alias
-  description: >
-    Share of renter households spending 50% or more of household income on gross
-    rent, among those for whom rent burden could be computed.
-  unit: "%"
-  palette: ["#fff7ec", "#fee8c8", "#fdbb84", "#e34a33", "#7f0000"]
-  source: ACS 5-year estimates, table B25070
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: quintile
-  display_format: percent
-  filename: severe_rent_burden.html
-
-crowded_households_pct:
-  domain: housing_and_affordability
-  short_label: Crowded housing
-  label: Occupied households with more than one occupant per room
-  description: >
-    Share of occupied housing units with more than one occupant per room,
-    combining owner- and renter-occupied households.
-  unit: "%"
-  palette: ["#f7fcf5", "#c7e9c0", "#74c476", "#238b45", "#00441b"]
-  source: ACS 5-year estimates, table B25014
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: quintile
-  display_format: percent
-  filename: crowded_housing.html
-
-subsidized_units_expiring_2025_2030:
-  domain: housing_and_affordability
-  short_label: Subsidized properties at risk
-  label: "Subsidized units with earliest recorded expiration in 2025–2030"
-  description: >
-    Number of residential units on subsidized properties whose earliest recorded
-    subsidy end date falls between 2025 and 2030.
-  unit: " units"
-  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
-  source: Furman Center Subsidized Housing Database
-  year: 2025
-  geography: Census tract
-  higher_is: worse
-  map_classification: quintile
-  display_format: count
-  filename: subsidized_housing_at_risk.html
-
-new_affordable_units_since_2018:
-  domain: housing_and_affordability
-  short_label: New affordable housing
-  label: Reported units at new-construction affordable properties since 2018
-  description: >
-    Number of units at affordable properties with a new-construction subsidy
-    start year of 2018 or later. Tracts with zero new units are shown separately.
-  unit: " units"
-  palette: ["#fff7fb", "#d4b9da", "#c994c7", "#8856a7", "#4d004b"]
-  source: Furman Center Subsidized Housing Database
-  year: 2025
-  geography: Census tract
-  higher_is: better
-  map_classification: quintile
-  display_format: count
-  positive_values_only: true
-  zero_color: "#e6e6e6"
-  zero_label: No new affordable units since 2018
-  filename: new_affordable_housing.html
-
-hpd_open_class_bc:
-  domain: housing_and_affordability
-  short_label: Housing quality
-  label: Open hazardous or immediately hazardous HPD Class B/C violations
-  description: >
-    Number of open HPD housing maintenance code violations rated Class B
-    (hazardous) or Class C (immediately hazardous).
-  unit: " violations"
-  palette: ["#ffffd4", "#fed98e", "#fe9929", "#d95f0e", "#662506"]
-  source: NYC HPD Housing Maintenance Code Violations
-  year: 2026
-  geography: Census tract
-  higher_is: worse
-  map_classification: quintile
-  display_format: count
-  filename: housing_quality.html
-
-# --- Demographics (baseline context, not domain outcomes) ---
-
-median_household_income:
-  domain: demographics
-  short_label: Median household income
-  label: Median household income
-  description: Median household income in the past 12 months (inflation-adjusted).
-  unit: "$"
-  palette: ["#f7fcf5", "#c7e9c0", "#74c476", "#238b45", "#00441b"]
-  source: ACS 5-year estimates, table B19013
-  year: 2023
-  geography: Census tract
-  higher_is: better
-  map_classification: quintile
-  display_format: dollar
-
-age_65_plus_share:
-  domain: demographics
-  short_label: "Age 65+"
-  label: Residents age 65 or older
-  description: Share of the total population aged 65 or older.
-  unit: "%"
-  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
-  source: ACS 5-year estimates, table B01001
-  year: 2023
-  geography: Census tract
-  higher_is: neutral
-  map_classification: quintile
-  display_format: percent
-
-white_non_hispanic_share:
-  domain: demographics
-  short_label: White non-Hispanic share
-  label: White non-Hispanic residents
-  description: Share of the total population identifying as White alone, not Hispanic or Latino.
-  unit: "%"
-  palette: ["#f7f7f7", "#d9d9d9", "#bdbdbd", "#636363", "#252525"]
-  source: ACS 5-year estimates, table B03002
-  year: 2023
-  geography: Census tract
-  higher_is: neutral
-  map_classification: quintile
-  display_format: percent
-
-black_non_hispanic_share:
-  domain: demographics
-  short_label: Black non-Hispanic share
-  label: Black non-Hispanic residents
-  description: Share of the total population identifying as Black or African American alone, not Hispanic or Latino.
-  unit: "%"
-  palette: ["#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"]
-  source: ACS 5-year estimates, table B03002
-  year: 2023
-  geography: Census tract
-  higher_is: neutral
-  map_classification: quintile
-  display_format: percent
-
-asian_non_hispanic_share:
-  domain: demographics
-  short_label: Asian non-Hispanic share
-  label: Asian non-Hispanic residents
-  description: Share of the total population identifying as Asian alone, not Hispanic or Latino.
-  unit: "%"
-  palette: ["#f7fcfd", "#ccece6", "#66c2a4", "#238b45", "#00441b"]
-  source: ACS 5-year estimates, table B03002
-  year: 2023
-  geography: Census tract
-  higher_is: neutral
-  map_classification: quintile
-  display_format: percent
-
-hispanic_share:
-  domain: demographics
-  short_label: Hispanic share
-  label: Hispanic residents of any race
-  description: Share of the total population identifying as Hispanic or Latino of any race.
-  unit: "%"
-  palette: ["#f7f4f9", "#d4b9da", "#df65b0", "#ce1256", "#67001f"]
-  source: ACS 5-year estimates, table B03002
-  year: 2023
-  geography: Census tract
-  higher_is: neutral
-  map_classification: quintile
-  display_format: percent
-
-poverty_rate:
-  domain: demographics
+poverty_rate_pct:
+  domain: economic-food
   short_label: Poverty rate
   label: Population below poverty level
-  description: Share of the population for whom poverty status was determined living below the federal poverty level.
-  unit: "%"
-  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
-  source: ACS 5-year estimates, table B17001
-  year: 2023
-  geography: Census tract
-  higher_is: worse
-  map_classification: quintile
-  display_format: percent
-
-senior_poverty_rate:
-  domain: demographics
-  short_label: Senior poverty rate
-  label: "Residents age 65+ below poverty level"
-  description: Share of residents aged 65 or older living below the federal poverty level.
-  unit: "%"
-  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
-  source: ACS 5-year estimates, table B17001
-  year: 2023
-  geography: Census tract
-  higher_is: worse
-  map_classification: quintile
-  display_format: percent
-
-lep_household_share:
-  domain: demographics
-  short_label: Limited-English-proficient households
-  label: Limited-English-proficient households
   description: >
-    Share of households where no member aged 14 or older speaks English
-    "very well" (limited-English-proficient households).
+    Percentage of tract population whose income in the past 12 months
+    was below the poverty level.
   unit: "%"
-  palette: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"]
-  source: ACS 5-year estimates, table B16002
-  year: 2023
+  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
+  source: ACS 5-year estimates, table B17020
+  year: 2024
   geography: Census tract
-  higher_is: neutral
+  higher_is: worse
   map_classification: quintile
   display_format: percent
+  filename: poverty_rate_pct.html
+
+food_supply_gap_rank:
+  domain: economic-food
+  short_label: Food supply gap rank
+  label: Emergency food supply gap rank
+  description: >
+    Emergency food supply gap rank joined to CB3 tracts. This metric is NTA-level
+    and may repeat across tracts within the same NTA.
+  unit: " rank"
+  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
+  source: Emergency Food Supply Gap dataset
+  year: 2026
+  geography: NTA joined to census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: number
+  filename: food_supply_gap_rank.html
+
+food_supply_gap_score:
+  domain: economic-food
+  short_label: Food supply gap score
+  label: Emergency food supply gap weighted score
+  description: >
+    Weighted emergency food supply gap score joined to CB3 tracts. This metric is
+    NTA-level and may repeat across tracts within the same NTA.
+  unit: " score"
+  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
+  source: Emergency Food Supply Gap dataset, Weighted_Score
+  year: 2026
+  geography: NTA joined to census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: number
+  filename: food_supply_gap_score.html
