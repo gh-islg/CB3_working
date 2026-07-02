@@ -260,7 +260,7 @@ no_routine_checkup_pct:
   # --- Economic Security & Food ---
 
 poverty_rate_pct:
-  domain: economic_food
+  domain: economic-food
   short_label: Poverty rate
   label: Population below poverty level
   description: >
@@ -277,7 +277,7 @@ poverty_rate_pct:
   filename: poverty_rate_pct.html
 
 food_supply_gap_rank:
-  domain: economic_food
+  domain: economic-food
   short_label: Food supply gap rank
   label: Emergency food supply gap rank
   description: >
@@ -295,7 +295,7 @@ food_supply_gap_rank:
   filename: food_supply_gap_rank.html
 
 food_supply_gap_score:
-  domain: economic_food
+  domain: economic-food
   short_label: Food supply gap score
   label: Emergency food supply gap weighted score
   description: >
