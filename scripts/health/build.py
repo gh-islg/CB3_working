@@ -147,6 +147,7 @@ def build_places_health_metrics():
     ]
 
     health = _to_numeric(health, numeric_cols)
+    health = clean_census_values(health)
 
     health["no_routine_checkup_pct"] = (
         100 - health["routine_checkup_past_year_pct"]
