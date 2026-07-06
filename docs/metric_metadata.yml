@@ -405,3 +405,38 @@ lep_household_share:
   higher_is: neutral
   map_classification: quintile
   display_format: percent
+
+# --- Health ---
+
+uninsured_adults_pct:
+  domain: health
+  short_label: Uninsured adults
+  label: Uninsured adults
+  description: >
+    Estimated percentage of adults without health insurance.
+  unit: "%"
+  palette: ["#ffffcc", "#feb24c", "#f03b20", "#bd0026", "#7a0177"]
+  source: CDC PLACES 2025 release, ACCESS2_CrudePrev
+  year: 2025
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: uninsured_adults_pct.html
+
+no_routine_checkup_pct:
+  domain: health
+  short_label: No routine checkup
+  label: Adults without routine checkup in past year
+  description: >
+    Calculated as 100 minus CDC PLACES CHECKUP_CrudePrev.
+    Used as a proxy for limited primary care access.
+  unit: "%"
+  palette: ["#ffffcc", "#feb24c", "#f03b20", "#bd0026", "#7a0177"]
+  source: CDC PLACES 2025 release, calculated from CHECKUP_CrudePrev
+  year: 2025
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: no_routine_checkup_pct.html

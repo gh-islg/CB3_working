@@ -1,0 +1,207 @@
+---
+format:
+  html:
+    self-contained: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+import sys
+from pathlib import Path
+
+# ------------------------------------------------------------
+# Find project root and make src/ importable
+# ------------------------------------------------------------
+PROJECT_DIR = Path.cwd()
+
+while not (PROJECT_DIR / "src").exists() and PROJECT_DIR != PROJECT_DIR.parent:
+    PROJECT_DIR = PROJECT_DIR.parent
+
+if not (PROJECT_DIR / "src").exists():
+    raise FileNotFoundError("Could not find project root containing src/ folder.")
+
+sys.path.insert(0, str(PROJECT_DIR))
+
+import yaml
+import pandas as pd
+import geopandas as gpd
+from IPython.display import display, HTML
+
+from src.map_utils import (
+    add_metric_layer,
+    make_base_map,
+)
+
+DOMAIN = "health"
+
+CLEAN_PATH = PROJECT_DIR / "data" / "clean" / "health.csv"
+GEOGRAPHY_PATH = PROJECT_DIR / "data" / "raw" / "Geography" / "cb3_2020_census_tracts.geojson"
+METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
+
+
+# ------------------------------------------------------------
+# Page-level CSS
+# ------------------------------------------------------------
+display(
+    HTML(
+        """
+        <style>
+        h1.title {
+            display: none;
+        }
+
+        .quarto-title-block {
+            display: none;
+        }
+
+        .cell-output-stdout {
+            display: none;
+        }
+
+        .leaflet-control-container .legend,
+        .leaflet-control-container .branca,
+        .leaflet-control-container .colormap,
+        .leaflet-control-container .leaflet-control {
+            font-size: 12px;
+        }
+
+        .leaflet-top.leaflet-left {
+            left: auto !important;
+            right: 10px !important;
+        }
+
+        .leaflet-top.leaflet-left .leaflet-control {
+            margin-left: 0 !important;
+            margin-right: 10px !important;
+        }
+
+        .leaflet-control-layers {
+            display: none;
+        }
+
+        .health-map-title {
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            margin-top: 24px;
+            margin-bottom: 8px;
+        }
+        </style>
+        """
+    )
+)
+
+
+# ------------------------------------------------------------
+# Load clean health data
+# ------------------------------------------------------------
+clean = pd.read_csv(CLEAN_PATH, dtype={"GEOID": str})
+clean["GEOID"] = clean["GEOID"].astype(str).str.zfill(11)
+
+
+# ------------------------------------------------------------
+# Load CB3 tract geography
+# ------------------------------------------------------------
+tracts = gpd.read_file(GEOGRAPHY_PATH)
+tracts.columns = tracts.columns.str.strip()
+
+if "GEOID" not in tracts.columns:
+    if "geoid" in tracts.columns:
+        tracts = tracts.rename(columns={"geoid": "GEOID"})
+    else:
+        raise ValueError("Could not find GEOID/geoid column in CB3 geography file.")
+
+tracts["GEOID"] = tracts["GEOID"].astype(str).str.zfill(11)
+
+
+# ------------------------------------------------------------
+# Join clean metrics to geography
+# ------------------------------------------------------------
+tracts = tracts.merge(
+    clean,
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
+
+assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
+assert tracts["GEOID"].is_unique, "GEOID is not unique after merge."
+
+
+# ------------------------------------------------------------
+# Load metric metadata
+# ------------------------------------------------------------
+with open(METADATA_PATH) as f:
+    all_metrics = yaml.safe_load(f)
+
+metric_specs = {
+    var: meta
+    for var, meta in all_metrics.items()
+    if meta.get("domain") == DOMAIN
+}
+
+
+# ------------------------------------------------------------
+# Select health metrics to map
+# ------------------------------------------------------------
+metrics_to_map = [
+    "uninsured_adults_pct",
+    "no_routine_checkup_pct",
+]
+
+metrics_to_map = [
+    metric
+    for metric in metrics_to_map
+    if metric in metric_specs and metric in tracts.columns
+]
+
+if not metrics_to_map:
+    raise ValueError(
+        "No health metrics found to map. Check docs/metric_metadata.yml "
+        "and data/clean/health.csv."
+    )
+
+
+# ------------------------------------------------------------
+# Create one separate map per metric
+# ------------------------------------------------------------
+for metric in metrics_to_map:
+    meta = metric_specs[metric]
+
+    display(
+        HTML(
+            f"""
+            <div class="health-map-title">
+                {meta["label"]}
+            </div>
+            """
+        )
+    )
+
+    spec = {
+        "dimension": meta["short_label"],
+        "label": meta["label"],
+        "unit": meta["unit"],
+        "palette": meta["palette"],
+    }
+
+    for optional_key in ["positive_values_only", "zero_color", "zero_label"]:
+        if optional_key in meta:
+            spec[optional_key] = meta[optional_key]
+
+    m = make_base_map(tracts)
+
+    add_metric_layer(
+        m,
+        tracts,
+        metric,
+        spec,
+        show=True,
+        overlay=False,
+    )
+
+    display(m)
+```
