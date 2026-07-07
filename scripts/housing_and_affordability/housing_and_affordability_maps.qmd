@@ -54,6 +54,7 @@ from src.demographic_profile_panel import (
     add_profile_click_layer,
 )
 from src.map_utils import (
+    add_bubble_layer,
     add_dynamic_metric_legend,
     add_map_title,
     add_metric_layer,
@@ -74,6 +75,9 @@ CLEAN_DATA_PATH = (
 )
 BASELINE_PROFILE_PATH = (
     PROJECT_DIR / "data" / "clean" / "cb3_tract_baseline_profile_clean.csv"
+)
+SUBSIDIZED_POINTS_PATH = (
+    PROJECT_DIR / "data" / "clean" / "housing_and_affordability_subsidized_points.csv"
 )
 TRACT_GEOMETRY_PATH = (
     PROJECT_DIR / "data" / "raw" / "Geography" / "2020_Census_Tracts_20260505.geojson"
@@ -136,6 +140,16 @@ tracts = tracts.merge(
     on="GEOID",
     how="left",
     validate="one_to_one",
+)
+
+# Read building-level subsidized-housing-at-risk points (native lat/lon, not
+# collapsed to a tract centroid) and attach tract/NTA labels for tooltips.
+subsidized_points = pd.read_csv(SUBSIDIZED_POINTS_PATH, dtype={"GEOID": "string"})
+subsidized_points = subsidized_points.merge(
+    tracts[["GEOID", "tract_label", "nta_name"]],
+    on="GEOID",
+    how="left",
+    validate="many_to_one",
 )
 ```
 
@@ -383,13 +397,83 @@ demographics_map.save(demographics_output_path)
 demographics_map
 ```
 
+## Demographics with subsidized housing at risk (point layer)
+
+```{python}
+# Choropleth layer: demographic fills, selectable one at a time (radio buttons).
+# Point layer on top: one circle per at-risk building, sized by the square root
+# of subsidized_units_expiring_2025_2030 so bubble *area* tracks unit count.
+# Buildings use their own address coordinates rather than a tract centroid.
+demographic_bubble_map = base_map()
+
+for index, metric in enumerate(DEMOGRAPHIC_SPECS):
+    add_metric_layer(
+        demographic_bubble_map, tracts, metric, DEMOGRAPHIC_SPECS[metric],
+        show=index == 0, add_legend=False, overlay=False,
+    )
+
+subsidized_spec = METRIC_SPECS["subsidized_units_expiring_2025_2030"]
+add_bubble_layer(
+    demographic_bubble_map,
+    subsidized_points,
+    "subsidized_units_expiring_2025_2030",
+    subsidized_spec["label"],
+    subsidized_spec["unit"],
+    name="Subsidized units expiring 2025-2030",
+    tooltip_fields=["standard_address", "tract_label"],
+    tooltip_aliases=["Address", "Census tract"],
+    color="#252525",
+    show=True,
+    overlay=True,
+)
+add_bubble_layer(
+    demographic_bubble_map,
+    subsidized_points,
+    "subsidized_units_expiring_2031_2040",
+    SUBSIDIZED_2031_2040_SPEC["label"],
+    SUBSIDIZED_2031_2040_SPEC["unit"],
+    name="Subsidized units expiring 2031-2040",
+    tooltip_fields=["standard_address", "tract_label"],
+    tooltip_aliases=["Address", "Census tract"],
+    color="#a63603",
+    show=True,
+    overlay=True,
+    legend_bottom_offset=145,
+)
+
+add_map_title(
+    demographic_bubble_map,
+    "CB3 demographics with subsidized housing at risk",
+    "Choropleth: use the layer control to pick a demographic fill. Bubbles: "
+    "size shows subsidized units at risk at each building, split into two "
+    "selectable layers by expiration window (2025-2030, 2031-2040).",
+)
+add_zero_value_legend(
+    demographic_bubble_map,
+    "#d9d9d9",
+    "Demographic data not available",
+)
+folium.LayerControl(collapsed=False, position="topright").add_to(demographic_bubble_map)
+
+demographic_bubble_output_path = (
+    MAP_OUTPUT_DIR / "demographics_with_subsidized_housing_at_risk.html"
+)
+demographic_bubble_map.save(demographic_bubble_output_path)
+demographic_bubble_map
+```
+
 ## Output validation
 
 ```{python}
 # Verify that all HTML deliverables were written.
 expected_map_files = [
     MAP_OUTPUT_DIR / spec["filename"] for spec in METRIC_SPECS.values()
-] + [combined_output_path, profile_panel_output_path, demographics_output_path]
+] + [
+    combined_output_path,
+    profile_panel_output_path,
+    demographics_output_path,
+    demographic_bubble_output_path,
+]
 
 for map_file in expected_map_files:
     assert map_file.exists()

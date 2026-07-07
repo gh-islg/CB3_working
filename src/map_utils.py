@@ -226,6 +226,138 @@ def add_metric_layer(
     return layer
 
 
+def add_bubble_layer(
+    map_object,
+    points,
+    value_col,
+    label,
+    unit,
+    name=None,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=None,
+    tooltip_aliases=None,
+    color="#252525",
+    min_radius=5,
+    max_radius=22,
+    show=True,
+    overlay=True,
+    add_legend=True,
+    legend_bottom_offset=35,
+):
+    """Add a sized-circle-marker layer for a point-level metric to a Folium map.
+
+    One circle is drawn per row in ``points``. Radius scales with the square
+    root of ``value_col`` so that circle *area* (not radius) is proportional to
+    magnitude. Use this directly for metrics with native coordinates (e.g.
+    building addresses); for metrics only available at the tract/NTA level,
+    first attach polygon centroid coordinates to ``lat_col``/``lon_col`` and
+    pass the result in.
+
+    Parameters
+    ----------
+    map_object : folium.Map
+    points : DataFrame
+        Must contain ``lat_col``, ``lon_col``, and ``value_col``.
+    value_col : str
+        Column to size circles by.
+    label : str
+        Human-readable metric label used in tooltips and the size legend.
+    unit : str
+        Passed to ``format_metric_value`` for tooltip/legend text.
+    name : str or None
+        Layer-control name; defaults to ``label``.
+    tooltip_fields, tooltip_aliases : list or None
+        Extra columns/aliases shown in the tooltip alongside ``value_col``.
+    color : str
+        Fixed marker fill/outline color for every circle in this layer.
+    min_radius, max_radius : float
+        Pixel radius bounds for the smallest and largest non-zero values.
+    show : bool
+        Whether the layer is visible on load.
+    overlay : bool
+        True → checkbox (overlay); False → radio button (base layer).
+    add_legend : bool
+        Whether to attach a bubble-size legend to the map.
+    legend_bottom_offset : int
+        Pixels from the bottom of the map to the legend box. Increase for each
+        additional bubble layer on the same map so legends stack without
+        overlapping.
+    """
+    layer_name = name or label
+    plot_points = points[points[value_col] > 0].copy()
+
+    max_value = plot_points[value_col].max()
+
+    def radius_for(value):
+        if max_value <= 0:
+            return min_radius
+        return min_radius + (max_radius - min_radius) * (value / max_value) ** 0.5
+
+    fields = [value_col] + (tooltip_fields or [])
+    aliases = [label] + (tooltip_aliases or [])
+
+    layer = folium.FeatureGroup(name=layer_name, show=show, control=overlay)
+    for _, row in plot_points.iterrows():
+        tooltip_lines = [
+            f"{alias}: {format_metric_value(row[field], unit) if field == value_col else row[field]}"
+            for field, alias in zip(fields, aliases)
+        ]
+        folium.CircleMarker(
+            location=[row[lat_col], row[lon_col]],
+            radius=radius_for(row[value_col]),
+            color=color,
+            weight=1,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.55,
+            tooltip=folium.Tooltip("<br>".join(tooltip_lines)),
+        ).add_to(layer)
+    layer.add_to(map_object)
+
+    if add_legend and max_value > 0:
+        add_bubble_size_legend(
+            map_object, label, unit, max_value, radius_for, color, bottom_offset=legend_bottom_offset
+        )
+
+    return layer
+
+
+def add_bubble_size_legend(map_object, label, unit, max_value, radius_fn, color, bottom_offset=35):
+    """Add a fixed-position legend showing three reference bubble sizes."""
+    reference_values = sorted(set(round(v) for v in (max_value, max_value / 2, max_value / 8) if v > 0))
+    svg_size = 2 * radius_fn(max(reference_values))
+    rows_html = "".join(
+        f"""
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+          <svg width="{svg_size}" height="{svg_size}" style="flex:0 0 auto;">
+            <circle cx="{svg_size / 2}" cy="{svg_size / 2}" r="{radius_fn(value)}"
+                    fill="{color}" fill-opacity="0.55" stroke="{color}" stroke-width="1" />
+          </svg>
+          <span>{format_metric_value(value, unit)}</span>
+        </div>
+        """
+        for value in reversed(reference_values)
+    )
+    legend_html = f"""
+    <div style="
+        position: fixed;
+        bottom: {bottom_offset}px;
+        right: 20px;
+        z-index: 9999;
+        background: rgba(255,255,255,0.94);
+        border: 1px solid #777;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font: 12px Arial, sans-serif;
+        color: #222;">
+      <div style="font-weight:700;margin-bottom:4px;">{label}</div>
+      {rows_html}
+    </div>
+    """
+    map_object.get_root().html.add_child(folium.Element(legend_html))
+
+
 def add_dynamic_metric_legend(map_object, legend_payload, initial_metric_name, legend_id="metric-legend"):
     """Inject a fixed-position legend that updates when the active base layer changes.
 

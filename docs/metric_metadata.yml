@@ -55,6 +55,23 @@ subsidized_units_expiring_2025_2030:
   display_format: count
   filename: subsidized_housing_at_risk.html
 
+subsidized_units_expiring_2031_2040:
+  domain: housing_and_affordability
+  short_label: Subsidized properties at risk (2031-2040)
+  label: "Subsidized units with earliest recorded expiration in 2031–2040"
+  description: >
+    Number of residential units on subsidized properties whose earliest recorded
+    subsidy end date falls between 2031 and 2040.
+  unit: " units"
+  palette: ["#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"]
+  source: Furman Center Subsidized Housing Database
+  year: 2025
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+  filename: subsidized_housing_at_risk_2031_2040.html
+
 new_affordable_units_since_2018:
   domain: housing_and_affordability
   short_label: New affordable housing
@@ -291,6 +308,34 @@ median_household_income:
   higher_is: better
   map_classification: quintile
   display_format: dollar
+
+age_0_to_19_share:
+  domain: demographics
+  short_label: "Age 0-19"
+  label: Residents age 0 to 19
+  description: Share of the total population aged 0 to 19.
+  unit: "%"
+  palette: ["#f7fcf5", "#c7e9c0", "#74c476", "#238b45", "#00441b"]
+  source: ACS 5-year estimates, table B01001
+  year: 2023
+  geography: Census tract
+  higher_is: neutral
+  map_classification: quintile
+  display_format: percent
+
+age_20_to_64_share:
+  domain: demographics
+  short_label: "Age 20-64"
+  label: Residents age 20 to 64
+  description: Share of the total population aged 20 to 64.
+  unit: "%"
+  palette: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"]
+  source: ACS 5-year estimates, table B01001
+  year: 2023
+  geography: Census tract
+  higher_is: neutral
+  map_classification: quintile
+  display_format: percent
 
 age_65_plus_share:
   domain: demographics
