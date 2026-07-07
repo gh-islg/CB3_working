@@ -53,10 +53,11 @@ for candidate in [Path.cwd(), *Path.cwd().parents]:
         break
 
 from src.map_utils import (
-    add_bubble_layer,
     add_map_title,
     add_metric_layer,
     add_zero_value_legend,
+    build_grouped_bubble_map,
+    build_metric_bubble_map,
     find_project_dir,
     make_base_map,
 )
@@ -210,121 +211,26 @@ def base_map():
 ```
 
 ```{python}
-def create_single_metric_map(
-    metric,
-    points=None,
-    lat_col="tract_centroid_latitude",
-    lon_col="tract_centroid_longitude",
-    tooltip_fields=["tract_label", "nta_name"],
-    tooltip_aliases=["Census tract", "NTA"],
-):
-    # Choropleth layer: demographic fills, selectable one at a time (radio
-    # buttons), for geographic/demographic context. Point layer on top: one
-    # bubble sized by magnitude. By default the bubble sits at the tract
-    # centroid, since most metrics here are only reported at the tract level.
-    # Metrics with native, finer-grained coordinates (e.g. individual building
-    # addresses) should pass their own ``points``/``lat_col``/``lon_col``
-    # instead, since collapsing them to a tract centroid would discard real
-    # location detail.
+# Thin, housing-domain-specific wrappers around the generic map builders in
+# src/map_utils.py, so call sites below don't have to repeat tracts/
+# METRIC_SPECS/DEMOGRAPHIC_SPECS/MAP_OUTPUT_DIR on every call.
+def create_single_metric_map(metric, **kwargs):
     spec = METRIC_SPECS[metric]
-    map_object = base_map()
-
-    for index, demographic in enumerate(DEMOGRAPHIC_SPECS):
-        add_metric_layer(
-            map_object, tracts, demographic, DEMOGRAPHIC_SPECS[demographic],
-            show=index == 0, add_legend=False, overlay=False,
-        )
-
-    add_bubble_layer(
-        map_object,
-        tracts if points is None else points,
-        metric,
-        spec["label"],
-        spec["unit"],
-        name=spec["dimension"],
-        lat_col=lat_col,
-        lon_col=lon_col,
-        tooltip_fields=tooltip_fields,
-        tooltip_aliases=tooltip_aliases,
-        show=True,
-        overlay=True,
+    return build_metric_bubble_map(
+        tracts, METRIC_SPECS, DEMOGRAPHIC_SPECS, metric,
+        title=f"CB3 Housing & Affordability: {spec['dimension']}",
+        output_path=MAP_OUTPUT_DIR / spec["filename"],
+        **kwargs,
     )
-    add_map_title(
-        map_object,
-        f"CB3 Housing & Affordability: {spec['dimension']}",
-        "Choropleth: use the layer control to pick a demographic fill. "
-        f"Bubbles: {spec['label']}.",
+
+
+def create_grouped_metric_map(metrics, filename, title, subtitle, **kwargs):
+    return build_grouped_bubble_map(
+        tracts, METRIC_SPECS, DEMOGRAPHIC_SPECS, metrics,
+        title=title, subtitle=subtitle,
+        output_path=MAP_OUTPUT_DIR / filename,
+        **kwargs,
     )
-    add_zero_value_legend(
-        map_object,
-        "#d9d9d9",
-        "Demographic data not available",
-    )
-    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
-    output_path = MAP_OUTPUT_DIR / spec["filename"]
-    map_object.save(output_path)
-    return map_object
-
-
-# Fixed color cycle for grouped maps, so each related-metric layer stays a
-# stable, distinguishable color regardless of how many layers are grouped.
-GROUPED_BUBBLE_COLORS = ["#252525", "#a63603", "#08519c", "#238b45", "#6a51a3"]
-
-
-def create_grouped_metric_map(
-    metrics,
-    filename,
-    title,
-    subtitle,
-    points=None,
-    lat_col="tract_centroid_latitude",
-    lon_col="tract_centroid_longitude",
-    tooltip_fields=["tract_label", "nta_name"],
-    tooltip_aliases=["Census tract", "NTA"],
-):
-    # Same demographic backdrop as create_single_metric_map(), but with one
-    # bubble layer per metric in `metrics` so directly related metrics (e.g.
-    # two expiration windows, or two violation-severity classes) can be
-    # compared side by side on a single map instead of only one at a time.
-    # Each layer gets a distinct color from GROUPED_BUBBLE_COLORS and its own
-    # stacked size legend.
-    map_object = base_map()
-
-    for index, demographic in enumerate(DEMOGRAPHIC_SPECS):
-        add_metric_layer(
-            map_object, tracts, demographic, DEMOGRAPHIC_SPECS[demographic],
-            show=index == 0, add_legend=False, overlay=False,
-        )
-
-    for index, metric in enumerate(metrics):
-        spec = METRIC_SPECS[metric]
-        add_bubble_layer(
-            map_object,
-            tracts if points is None else points,
-            metric,
-            spec["label"],
-            spec["unit"],
-            name=spec["dimension"],
-            lat_col=lat_col,
-            lon_col=lon_col,
-            tooltip_fields=tooltip_fields,
-            tooltip_aliases=tooltip_aliases,
-            color=GROUPED_BUBBLE_COLORS[index % len(GROUPED_BUBBLE_COLORS)],
-            show=True,
-            overlay=True,
-            legend_bottom_offset=35 + index * 110,
-        )
-
-    add_map_title(map_object, title, subtitle)
-    add_zero_value_legend(
-        map_object,
-        "#d9d9d9",
-        "Demographic data not available",
-    )
-    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
-    output_path = MAP_OUTPUT_DIR / filename
-    map_object.save(output_path)
-    return map_object
 ```
 
 ## Separate maps
@@ -347,7 +253,7 @@ crowded_housing_map = create_single_metric_map(
 crowded_housing_map
 ```
 
-### Subsidized properties at risk
+### Subsidized properties at risk (2025–2030)
 
 ```{python}
 # Subsidized housing is reported at the building level, not the tract level,
@@ -469,7 +375,7 @@ demographics_map
 ```{python}
 # Subsidized housing is reported at the building level, not the tract level,
 # so bubbles use each building's own coordinates rather than a tract centroid.
-demographic_bubble_output_path = MAP_OUTPUT_DIR / "demographics_with_subsidized_housing_at_risk.html"
+demographic_bubble_output_path = MAP_OUTPUT_DIR / "subsidized_housing_at_risk_2025_2040.html"
 demographic_bubble_map = create_grouped_metric_map(
     ["subsidized_units_expiring_2025_2030", "subsidized_units_expiring_2031_2040"],
     demographic_bubble_output_path.name,

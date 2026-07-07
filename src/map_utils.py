@@ -408,3 +408,154 @@ def add_bubble_size_legend(map_object, label, unit, max_value, radius_fn, color,
     </div>
     """
     map_object.get_root().html.add_child(folium.Element(legend_html))
+
+
+# Fixed color cycle for grouped bubble maps, so each related-metric layer
+# stays a stable, distinguishable color regardless of how many layers are
+# grouped together.
+GROUPED_BUBBLE_COLORS = ["#252525", "#db3232"]
+
+
+def build_metric_bubble_map(
+    tracts,
+    metric_specs,
+    demographic_specs,
+    metric,
+    title,
+    output_path,
+    points=None,
+    lat_col="tract_centroid_latitude",
+    lon_col="tract_centroid_longitude",
+    tooltip_fields=None,
+    tooltip_aliases=None,
+):
+    """Build and save a map with selectable demographic choropleth backdrops
+    and one bubble layer for ``metric``, sized by magnitude.
+
+    By default the bubble sits at each tract's centroid, since most metrics
+    are only reported at the tract level. Metrics with native, finer-grained
+    coordinates (e.g. individual building addresses) should pass their own
+    ``points``/``lat_col``/``lon_col`` instead, since collapsing them to a
+    tract centroid would discard real location detail.
+
+    Parameters
+    ----------
+    tracts : GeoDataFrame
+        Must contain ``geometry`` and every column referenced by
+        ``metric_specs``/``demographic_specs`` (unless ``points`` is given
+        for the bubble layer itself).
+    metric_specs : dict
+        Keyed by column name; values are specs as built for ``add_metric_layer``
+        (``dimension``, ``label``, ``unit``, ``palette``, ``filename`` unused here).
+    demographic_specs : dict
+        Keyed by column name; drawn as selectable (radio-button) choropleth
+        base layers, one shown at a time, for geographic/demographic context.
+    metric : str
+        Key into ``metric_specs`` for the bubble layer.
+    title : str
+        Map title text.
+    output_path : Path
+        Where to save the resulting HTML map.
+    points : DataFrame or None
+        Passed to ``add_bubble_layer``; defaults to ``tracts`` (tract centroids).
+    tooltip_fields, tooltip_aliases : list or None
+        Extra bubble tooltip fields; default to tract label/NTA.
+    """
+    tooltip_fields = tooltip_fields if tooltip_fields is not None else ["tract_label", "nta_name"]
+    tooltip_aliases = tooltip_aliases if tooltip_aliases is not None else ["Census tract", "NTA"]
+    spec = metric_specs[metric]
+    map_object = make_base_map(tracts)
+
+    for index, demographic in enumerate(demographic_specs):
+        add_metric_layer(
+            map_object, tracts, demographic, demographic_specs[demographic],
+            show=index == 0, add_legend=False, overlay=False,
+        )
+
+    add_bubble_layer(
+        map_object,
+        tracts if points is None else points,
+        metric,
+        spec["label"],
+        spec["unit"],
+        name=spec["dimension"],
+        lat_col=lat_col,
+        lon_col=lon_col,
+        tooltip_fields=tooltip_fields,
+        tooltip_aliases=tooltip_aliases,
+        show=True,
+        overlay=True,
+    )
+    add_map_title(
+        map_object,
+        title,
+        "Choropleth: use the layer control to pick a demographic fill. "
+        f"Bubbles: {spec['label']}.",
+    )
+    add_zero_value_legend(map_object, "#d9d9d9", "Demographic data not available")
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(output_path)
+    return map_object
+
+
+def build_grouped_bubble_map(
+    tracts,
+    metric_specs,
+    demographic_specs,
+    metrics,
+    title,
+    subtitle,
+    output_path,
+    points=None,
+    lat_col="tract_centroid_latitude",
+    lon_col="tract_centroid_longitude",
+    tooltip_fields=None,
+    tooltip_aliases=None,
+):
+    """Like ``build_metric_bubble_map``, but adds one bubble layer per metric
+    in ``metrics`` so directly related metrics (e.g. two expiration windows,
+    or two violation-severity classes) can be compared side by side on a
+    single map instead of only one at a time. Each layer gets a distinct
+    color from ``GROUPED_BUBBLE_COLORS`` and its own stacked size legend.
+
+    Parameters mirror ``build_metric_bubble_map``, except ``metrics`` is a
+    list of keys into ``metric_specs`` and ``subtitle`` is required (there is
+    no single metric to derive default subtitle text from).
+    """
+    tooltip_fields = tooltip_fields if tooltip_fields is not None else ["tract_label", "nta_name"]
+    tooltip_aliases = tooltip_aliases if tooltip_aliases is not None else ["Census tract", "NTA"]
+    map_object = make_base_map(tracts)
+
+    for index, demographic in enumerate(demographic_specs):
+        add_metric_layer(
+            map_object, tracts, demographic, demographic_specs[demographic],
+            show=index == 0, add_legend=False, overlay=False,
+        )
+
+    for index, metric in enumerate(metrics):
+        spec = metric_specs[metric]
+        add_bubble_layer(
+            map_object,
+            tracts if points is None else points,
+            metric,
+            spec["label"],
+            spec["unit"],
+            name=spec["dimension"],
+            lat_col=lat_col,
+            lon_col=lon_col,
+            tooltip_fields=tooltip_fields,
+            tooltip_aliases=tooltip_aliases,
+            color=GROUPED_BUBBLE_COLORS[index % len(GROUPED_BUBBLE_COLORS)],
+            show=True,
+            overlay=True,
+            # Each bubble-size legend can be up to ~190px tall (title + 3
+            # reference rows at the default max_radius=22), so layers must be
+            # spaced further apart than that to avoid overlapping.
+            legend_bottom_offset=35 + index * 230,
+        )
+
+    add_map_title(map_object, title, subtitle)
+    add_zero_value_legend(map_object, "#d9d9d9", "Demographic data not available")
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(output_path)
+    return map_object
