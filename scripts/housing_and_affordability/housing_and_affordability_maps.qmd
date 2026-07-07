@@ -13,18 +13,23 @@ jupyter: cb3
 
 ## Purpose
 
-This notebook reads the clean Housing & Affordability tract table and maps five
+This notebook reads the clean Housing & Affordability tract table and maps six
 representative dimensions:
 
 1. Severe rent burden: `severe_rent_burden_pct`
 2. Crowded housing: `crowded_households_pct`
-3. Subsidized properties at risk: `subsidized_units_expiring_2025_2030`
-4. New affordable housing: `new_affordable_units_since_2018`
-5. Housing quality: `hpd_open_class_bc`
+3. Subsidized properties at risk (2025–2030): `subsidized_units_expiring_2025_2030`
+4. Subsidized properties at risk (2031–2040): `subsidized_units_expiring_2031_2040`
+5. New affordable housing: `new_affordable_units_since_2018`
+6. Housing quality: `hpd_open_class_bc`
 
 Each metric is presented on its own map, as a bubble layer sized by magnitude
-over selectable demographic choropleth base layers. Map HTML files are written
-to `maps/housing_and_affordability/`.
+over selectable demographic choropleth base layers. Severe rent burden,
+crowded housing, and housing quality are only ever reported at the tract
+level, so their bubbles sit at each tract's centroid. Subsidized properties at
+risk and new affordable housing are building-level data, so their bubbles use
+each building's own coordinates instead of a tract centroid. Map HTML files
+are written to `maps/housing_and_affordability/`.
 
 The notebook also reads the clean CB3 tract baseline profile and creates one
 selectable-layer demographics map for median household income, age, race and
@@ -125,7 +130,6 @@ DEMOGRAPHIC_COLUMNS = [
     "asian_non_hispanic_share",
     "hispanic_share",
     "poverty_rate",
-    "senior_poverty_rate",
     "lep_household_share",
 ]
 
@@ -180,10 +184,15 @@ METRIC_SPECS = {
     if meta["domain"] == "housing_and_affordability"
 }
 
+
+# senior_poverty_rate is registered as a demographic metric for other domains'
+# notebooks, but is not featured as a layer on the housing demographic maps.
+EXCLUDED_DEMOGRAPHIC_METRICS = {"senior_poverty_rate"}
+
 DEMOGRAPHIC_SPECS = {
     var: _to_map_spec(meta)
     for var, meta in ALL_METRICS.items()
-    if meta["domain"] == "demographics"
+    if meta["domain"] == "demographics" and var not in EXCLUDED_DEMOGRAPHIC_METRICS
 }
 
 for metric in METRIC_SPECS:
@@ -253,6 +262,67 @@ def create_single_metric_map(
     )
     folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
     output_path = MAP_OUTPUT_DIR / spec["filename"]
+    map_object.save(output_path)
+    return map_object
+
+
+# Fixed color cycle for grouped maps, so each related-metric layer stays a
+# stable, distinguishable color regardless of how many layers are grouped.
+GROUPED_BUBBLE_COLORS = ["#252525", "#a63603", "#08519c", "#238b45", "#6a51a3"]
+
+
+def create_grouped_metric_map(
+    metrics,
+    filename,
+    title,
+    subtitle,
+    points=None,
+    lat_col="tract_centroid_latitude",
+    lon_col="tract_centroid_longitude",
+    tooltip_fields=["tract_label", "nta_name"],
+    tooltip_aliases=["Census tract", "NTA"],
+):
+    # Same demographic backdrop as create_single_metric_map(), but with one
+    # bubble layer per metric in `metrics` so directly related metrics (e.g.
+    # two expiration windows, or two violation-severity classes) can be
+    # compared side by side on a single map instead of only one at a time.
+    # Each layer gets a distinct color from GROUPED_BUBBLE_COLORS and its own
+    # stacked size legend.
+    map_object = base_map()
+
+    for index, demographic in enumerate(DEMOGRAPHIC_SPECS):
+        add_metric_layer(
+            map_object, tracts, demographic, DEMOGRAPHIC_SPECS[demographic],
+            show=index == 0, add_legend=False, overlay=False,
+        )
+
+    for index, metric in enumerate(metrics):
+        spec = METRIC_SPECS[metric]
+        add_bubble_layer(
+            map_object,
+            tracts if points is None else points,
+            metric,
+            spec["label"],
+            spec["unit"],
+            name=spec["dimension"],
+            lat_col=lat_col,
+            lon_col=lon_col,
+            tooltip_fields=tooltip_fields,
+            tooltip_aliases=tooltip_aliases,
+            color=GROUPED_BUBBLE_COLORS[index % len(GROUPED_BUBBLE_COLORS)],
+            show=True,
+            overlay=True,
+            legend_bottom_offset=35 + index * 110,
+        )
+
+    add_map_title(map_object, title, subtitle)
+    add_zero_value_legend(
+        map_object,
+        "#d9d9d9",
+        "Demographic data not available",
+    )
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    output_path = MAP_OUTPUT_DIR / filename
     map_object.save(output_path)
     return map_object
 ```
@@ -332,6 +402,39 @@ housing_quality_map = create_single_metric_map(
 housing_quality_map
 ```
 
+### Housing quality (Class B)
+
+```{python}
+housing_quality_class_b_map = create_single_metric_map(
+    "hpd_open_class_b"
+)
+housing_quality_class_b_map
+```
+
+### Housing quality (Class C)
+
+```{python}
+housing_quality_class_c_map = create_single_metric_map(
+    "hpd_open_class_c"
+)
+housing_quality_class_c_map
+```
+
+### Housing quality (Class B vs Class C)
+
+```{python}
+housing_quality_class_output_path = MAP_OUTPUT_DIR / "housing_quality_class_b_vs_c.html"
+housing_quality_class_map = create_grouped_metric_map(
+    ["hpd_open_class_b", "hpd_open_class_c"],
+    housing_quality_class_output_path.name,
+    "CB3 Housing & Affordability: Housing quality by violation class",
+    "Choropleth: use the layer control to pick a demographic fill. Bubbles: "
+    "size shows open HPD violations at each tract, split into two selectable "
+    "layers by severity (Class B hazardous, Class C immediately hazardous).",
+)
+housing_quality_class_map
+```
+
 ## Demographic context map
 
 ```{python}
@@ -364,66 +467,22 @@ demographics_map
 ## Demographics with subsidized housing at risk (point layer)
 
 ```{python}
-# Choropleth layer: demographic fills, selectable one at a time (radio buttons).
-# Point layer on top: one circle per at-risk building, sized by the square root
-# of subsidized_units_expiring_2025_2030 so bubble *area* tracks unit count.
-# Buildings use their own address coordinates rather than a tract centroid.
-demographic_bubble_map = base_map()
-
-for index, metric in enumerate(DEMOGRAPHIC_SPECS):
-    add_metric_layer(
-        demographic_bubble_map, tracts, metric, DEMOGRAPHIC_SPECS[metric],
-        show=index == 0, add_legend=False, overlay=False,
-    )
-
-subsidized_spec = METRIC_SPECS["subsidized_units_expiring_2025_2030"]
-add_bubble_layer(
-    demographic_bubble_map,
-    subsidized_points,
-    "subsidized_units_expiring_2025_2030",
-    subsidized_spec["label"],
-    subsidized_spec["unit"],
-    name="Subsidized units expiring 2025-2030",
-    tooltip_fields=["standard_address", "tract_label"],
-    tooltip_aliases=["Address", "Census tract"],
-    color="#252525",
-    show=True,
-    overlay=True,
-)
-subsidized_2031_2040_spec = METRIC_SPECS["subsidized_units_expiring_2031_2040"]
-add_bubble_layer(
-    demographic_bubble_map,
-    subsidized_points,
-    "subsidized_units_expiring_2031_2040",
-    subsidized_2031_2040_spec["label"],
-    subsidized_2031_2040_spec["unit"],
-    name="Subsidized units expiring 2031-2040",
-    tooltip_fields=["standard_address", "tract_label"],
-    tooltip_aliases=["Address", "Census tract"],
-    color="#a63603",
-    show=True,
-    overlay=True,
-    legend_bottom_offset=145,
-)
-
-add_map_title(
-    demographic_bubble_map,
+# Subsidized housing is reported at the building level, not the tract level,
+# so bubbles use each building's own coordinates rather than a tract centroid.
+demographic_bubble_output_path = MAP_OUTPUT_DIR / "demographics_with_subsidized_housing_at_risk.html"
+demographic_bubble_map = create_grouped_metric_map(
+    ["subsidized_units_expiring_2025_2030", "subsidized_units_expiring_2031_2040"],
+    demographic_bubble_output_path.name,
     "CB3 demographics with subsidized housing at risk",
     "Choropleth: use the layer control to pick a demographic fill. Bubbles: "
     "size shows subsidized units at risk at each building, split into two "
     "selectable layers by expiration window (2025-2030, 2031-2040).",
+    points=subsidized_points,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["standard_address", "tract_label"],
+    tooltip_aliases=["Address", "Census tract"],
 )
-add_zero_value_legend(
-    demographic_bubble_map,
-    "#d9d9d9",
-    "Demographic data not available",
-)
-folium.LayerControl(collapsed=False, position="topright").add_to(demographic_bubble_map)
-
-demographic_bubble_output_path = (
-    MAP_OUTPUT_DIR / "demographics_with_subsidized_housing_at_risk.html"
-)
-demographic_bubble_map.save(demographic_bubble_output_path)
 demographic_bubble_map
 ```
 
@@ -436,6 +495,7 @@ expected_map_files = [
 ] + [
     demographics_output_path,
     demographic_bubble_output_path,
+    housing_quality_class_output_path,
 ]
 
 for map_file in expected_map_files:
