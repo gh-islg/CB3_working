@@ -92,6 +92,190 @@ hpd_open_class_bc:
   display_format: count
   filename: housing_quality.html
 
+# --- Environmental Conditions ---
+
+ej_area_flag:
+  domain: environment
+  short_label: EJ Area (2024)
+  label: Designated Environmental Justice Area (MOCEJ 2024)
+  description: >
+    Binary flag indicating whether the census tract is designated a 2024
+    Environmental Justice Area by the Mayor's Office of Climate and Environmental
+    Justice. Designation is based on 2010 tract boundaries (GEOID10) and joined
+    to 2020 tracts via the primary contributing source tract.
+  unit: ""
+  palette: ["#f7f7f7", "#252525"]
+  source: MOCEJ EJ Areas 2024
+  year: 2024
+  geography: Census tract (assigned from 2010 boundaries via crosswalk)
+  higher_is: neutral
+  map_classification: binary
+  display_format: flag
+
+rodent_311_calls:
+  domain: environment
+  short_label: Rodent 311 calls
+  label: Rodent-related 311 service requests (2020–April 2026)
+  description: >
+    Count of 311 service requests with complaint type "Rodent" filed in CB3
+    between January 2020 and April 2026, allocated to 2020 census tracts by
+    spatial join of point coordinates. Retained for the 311-vs.-inspection
+    disparity narrative; not recommended as a primary rodent burden metric
+    because call volume reflects reporting access, not actual infestation rates.
+  unit: " calls"
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: NYC OpenData 311 Service Requests
+  year: 2026
+  geography: Census tract (spatially joined from point coordinates)
+  higher_is: neutral
+  map_classification: quintile
+  display_format: count
+
+rodent_active_inspections:
+  domain: environment
+  short_label: Rodent inspections
+  label: DOHMH rodent inspections with confirmed rat activity (2022–2025)
+  description: >
+    Count of DOHMH rodent inspections where the result was "Rat Activity" or
+    "Failed for Rat Activity and Other Reason", indicating confirmed rat
+    presence. Covers all inspection types (initial, compliance, treatments)
+    filed in CB3 between 2022 and 2025. Preferred over 311 call volume as a
+    measure of actual infestation burden because it reflects DOHMH-confirmed
+    evidence rather than resident reporting behavior.
+  unit: " inspections"
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: DOHMH Rodent Inspection (NYC OpenData)
+  year: 2025
+  geography: Census tract (spatially joined from point coordinates; CENSUS TRACT field as fallback)
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+  filename: rodent_inspections.html
+
+indoor_environmental_complaints:
+  domain: environment
+  short_label: Indoor env. complaints
+  label: DOHMH indoor environmental complaints (2010–April 2026)
+  description: >
+    Total count of DOHMH indoor environmental complaints (indoor air quality,
+    mold, asbestos, and indoor sewage) filed in CB3, allocated to 2020 census
+    tracts by spatial join with the source tract field as fallback. Note: the
+    311 reporting bias documented in the concept report applies — East Village
+    generates a disproportionate share of complaints relative to actual
+    environmental burden.
+  unit: " complaints"
+  palette: ["#fff7f3", "#fde0dd", "#fbb4b9", "#f768a1", "#7a0177"]
+  source: DOHMH Indoor Environmental Complaints (NYC OpenData)
+  year: 2026
+  geography: Census tract (spatially joined from point coordinates; source tract as fallback)
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+  filename: indoor_environmental_complaints.html
+
+avg_acceptable_streets_pct:
+  domain: environment
+  short_label: Street cleanliness
+  label: "Acceptable Streets % — 12-month average (Oct 2022–Aug 2023)"
+  description: >
+    Average monthly "Acceptable Streets %" scorecard rating across the 11 non-null
+    months from October 2022 through August 2023 (September 2023 is present in the
+    data but reported as null). Reported at the DSNY cleaning section level
+    (MN031–MN034), not census tract. Higher values indicate more block-faces rated
+    acceptably clean during DSNY inspections.
+  unit: "%"
+  palette: ["#ffffcc", "#c2e699", "#78c679", "#31a354", "#006837"]
+  source: DSNY Scorecard Ratings (NYC OpenData)
+  year: 2023
+  geography: DSNY cleaning section (MN031–MN034)
+  higher_is: better
+  map_classification: continuous
+  display_format: percent
+  filename: avg_acceptable_streets.html
+
+avg_acceptable_sidewalks_pct:
+  domain: environment
+  short_label: Sidewalk cleanliness
+  label: "Acceptable Sidewalks % — 12-month average (Oct 2022–Aug 2023)"
+  description: >
+    Average monthly "Acceptable Sidewalks %" scorecard rating across the 11 non-null
+    months from October 2022 through August 2023. Reported at the DSNY cleaning
+    section level (MN031–MN034), not census tract. Higher values indicate more
+    block-faces rated acceptably clean.
+  unit: "%"
+  palette: ["#ffffcc", "#c2e699", "#78c679", "#31a354", "#006837"]
+  source: DSNY Scorecard Ratings (NYC OpenData)
+  year: 2023
+  geography: DSNY cleaning section (MN031–MN034)
+  higher_is: better
+  map_classification: continuous
+  display_format: percent
+  filename: avg_acceptable_sidewalks.html
+
+indoor_air_quality_complaints:
+  domain: environment
+  short_label: Air quality complaints
+  label: DOHMH indoor air quality complaints (2010–April 2026)
+  description: >
+    Count of DOHMH complaints with type "Indoor Air Quality" filed in CB3,
+    allocated to 2020 census tracts.
+  unit: " complaints"
+  palette: ["#fff7f3", "#fde0dd", "#fbb4b9", "#f768a1", "#7a0177"]
+  source: DOHMH Indoor Environmental Complaints (NYC OpenData)
+  year: 2026
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+
+mold_complaints:
+  domain: environment
+  short_label: Mold complaints
+  label: DOHMH mold complaints (2010–April 2026)
+  description: >
+    Count of DOHMH complaints with type "Mold" filed in CB3, allocated to
+    2020 census tracts.
+  unit: " complaints"
+  palette: ["#fff7f3", "#fde0dd", "#fbb4b9", "#f768a1", "#7a0177"]
+  source: DOHMH Indoor Environmental Complaints (NYC OpenData)
+  year: 2026
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+
+asbestos_complaints:
+  domain: environment
+  short_label: Asbestos complaints
+  label: DOHMH asbestos complaints (2010–April 2026)
+  description: >
+    Count of DOHMH complaints with type "Asbestos" filed in CB3, allocated to
+    2020 census tracts.
+  unit: " complaints"
+  palette: ["#fff7f3", "#fde0dd", "#fbb4b9", "#f768a1", "#7a0177"]
+  source: DOHMH Indoor Environmental Complaints (NYC OpenData)
+  year: 2026
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+
+indoor_sewage_complaints:
+  domain: environment
+  short_label: Sewage complaints
+  label: DOHMH indoor sewage complaints (2010–April 2026)
+  description: >
+    Count of DOHMH complaints with type "Indoor Sewage" filed in CB3, allocated
+    to 2020 census tracts.
+  unit: " complaints"
+  palette: ["#fff7f3", "#fde0dd", "#fbb4b9", "#f768a1", "#7a0177"]
+  source: DOHMH Indoor Environmental Complaints (NYC OpenData)
+  year: 2026
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+
 # --- Demographics (baseline context, not domain outcomes) ---
 
 median_household_income:
