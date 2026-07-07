@@ -440,3 +440,53 @@ no_routine_checkup_pct:
   map_classification: quintile
   display_format: percent
   filename: no_routine_checkup_pct.html
+
+# --- Language Access ---
+
+lep_household_share:
+  domain: language_access
+  short_label: LEP household share
+  label: Limited-English-proficient households
+  description: >
+    Percentage of households in which no person age 14 or older speaks
+    English only or speaks English very well. Calculated as
+    (C16002_004E + C16002_007E + C16002_010E + C16002_013E)
+    divided by C16002_001E, multiplied by 100.
+  unit: "%"
+  palette:
+    - "#ffffcc"
+    - "#ffeda0"
+    - "#feb24c"
+    - "#f03b20"
+    - "#bd0026"
+  source: ACS 2020-2024 5-year estimates, table C16002
+  year: 2024
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: lep_household_share.html
+
+senior_asian_pacific_lep_count:
+  domain: language_access
+  short_label: Senior Asian/Pacific LEP count
+  label: Asian/Pacific-language-speaking seniors with limited English proficiency
+  description: >
+    Estimated number of residents age 65 and older who speak an Asian or
+    Pacific Island language and speak English less than very well, calculated
+    from B16004_062E + B16004_063E. The exact ACS cell labels should be
+    confirmed against the source metadata before publication.
+  unit: " people"
+  palette:
+    - "#fff7f3"
+    - "#fde0dd"
+    - "#fa9fb5"
+    - "#c51b8a"
+    - "#7a0177"
+  source: ACS 2020-2024 5-year estimates, table B16004
+  year: 2024
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: number
+  filename: senior_asian_pacific_lep_count.html

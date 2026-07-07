@@ -1,0 +1,627 @@
+---
+title: ""
+format:
+  html:
+    self-contained: true
+    toc: false
+    page-layout: full
+execute:
+  echo: false
+  warning: false
+  message: false
+jupyter: python3
+---
+
+```{python}
+from pathlib import Path
+import json
+
+import folium
+import geopandas as gpd
+import pandas as pd
+from IPython.display import display
+
+
+def find_repo_root() -> Path:
+    """Locate the repository root from the current render directory."""
+    current_path = Path.cwd().resolve()
+
+    for candidate in [
+        current_path,
+        *current_path.parents,
+    ]:
+        if (
+            (candidate / "data").exists()
+            and (candidate / "scripts").exists()
+        ):
+            return candidate
+
+    raise FileNotFoundError(
+        "Could not locate the repository root."
+    )
+
+
+REPO_ROOT = find_repo_root()
+
+CLEAN_FILE = (
+    REPO_ROOT
+    / "data"
+    / "clean"
+    / "language.csv"
+)
+
+BOUNDARY_FILE = (
+    REPO_ROOT
+    / "data"
+    / "raw"
+    / "Geography"
+    / "cb3_2020_census_tracts.geojson"
+)
+
+MAP_OUTPUT_DIR = (
+    REPO_ROOT
+    / "docs"
+    / "maps"
+    / "language"
+)
+
+MAP_OUTPUT_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+```
+
+```{python}
+def prepare_geoid(
+    frame,
+):
+    """Normalize an existing tract GEOID column."""
+    result = frame.copy()
+
+    candidates = [
+        "GEOID",
+        "geoid",
+        "GeoID",
+        "GEO_ID",
+        "tract_geoid",
+        "tract_fips",
+    ]
+
+    geoid_column = next(
+        (
+            column
+            for column in candidates
+            if column in result.columns
+        ),
+        None,
+    )
+
+    if geoid_column is None:
+        raise ValueError(
+            "Could not find GEOID in columns: "
+            f"{result.columns.tolist()}"
+        )
+
+    if geoid_column != "GEOID":
+        result = result.rename(
+            columns={
+                geoid_column: "GEOID",
+            }
+        )
+
+    result["GEOID"] = (
+        result["GEOID"]
+        .astype(str)
+        .str.extract(
+            r"(\d{11})"
+        )[0]
+        .str.zfill(11)
+    )
+
+    return result
+
+
+def assign_quintiles(
+    series,
+):
+    """Assign Q1 through Q5 using ranked values."""
+    numeric = pd.to_numeric(
+        series,
+        errors="coerce",
+    )
+
+    output = pd.Series(
+        pd.NA,
+        index=series.index,
+        dtype="object",
+    )
+
+    valid = numeric.notna()
+
+    if valid.sum() < 5:
+        raise ValueError(
+            "At least five valid values are required "
+            "to calculate quintiles."
+        )
+
+    ranked = numeric.loc[
+        valid
+    ].rank(
+        method="first"
+    )
+
+    output.loc[
+        valid
+    ] = pd.qcut(
+        ranked,
+        q=5,
+        labels=[
+            "Q1 — Lowest",
+            "Q2",
+            "Q3",
+            "Q4",
+            "Q5 — Highest",
+        ],
+    ).astype(str)
+
+    return output
+
+
+def add_map_title(
+    map_object,
+    title,
+):
+    """Add a centered title inside the interactive map."""
+    title_html = f"""
+    <div style="
+        position: fixed;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 9999;
+        background: rgba(255, 255, 255, 0.94);
+        padding: 9px 16px;
+        border: 1px solid #bdbdbd;
+        border-radius: 4px;
+        box-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
+        font-family: Arial, sans-serif;
+        font-size: 18px;
+        font-weight: 700;
+        color: #222222;
+        white-space: nowrap;
+    ">
+        {title}
+    </div>
+    """
+
+    map_object.get_root().html.add_child(
+        folium.Element(
+            title_html
+        )
+    )
+
+
+def add_quintile_legend(
+    map_object,
+    palette,
+):
+    """Add a visible Q1-Q5 legend."""
+    palette_colors = {
+        "YlOrRd": [
+            "#ffffb2",
+            "#fecc5c",
+            "#fd8d3c",
+            "#f03b20",
+            "#bd0026",
+        ],
+        "PuRd": [
+            "#f1eef6",
+            "#d7b5d8",
+            "#df65b0",
+            "#ce1256",
+            "#91003f",
+        ],
+    }
+
+    if palette not in palette_colors:
+        raise ValueError(
+            f"Unsupported palette: {palette}"
+        )
+
+    labels = [
+        "Q1 — Lowest",
+        "Q2",
+        "Q3",
+        "Q4",
+        "Q5 — Highest",
+    ]
+
+    legend_rows = ""
+
+    for color, label in zip(
+        palette_colors[palette],
+        labels,
+    ):
+        legend_rows += f"""
+        <div style="
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+        ">
+            <span style="
+                display: inline-block;
+                width: 15px;
+                height: 15px;
+                margin-right: 7px;
+                background: {color};
+                border: 1px solid #777777;
+            "></span>
+            <span>{label}</span>
+        </div>
+        """
+
+    legend_html = f"""
+    <div style="
+        position: fixed;
+        bottom: 25px;
+        right: 20px;
+        z-index: 9999;
+        background: white;
+        padding: 10px 12px;
+        border: 1px solid #999999;
+        border-radius: 4px;
+        font-family: Arial, sans-serif;
+        font-size: 12px;
+        color: #222222;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    ">
+        <div style="
+            font-weight: 700;
+            margin-bottom: 7px;
+        ">
+            Quintile
+        </div>
+        {legend_rows}
+    </div>
+    """
+
+    map_object.get_root().html.add_child(
+        folium.Element(
+            legend_html
+        )
+    )
+
+
+def make_quintile_map(
+    gdf,
+    metric,
+    title,
+    value_alias,
+    palette,
+    output_filename,
+):
+    """Create and save one tract-level quintile map."""
+    plot_gdf = (
+        gdf.copy()
+        .to_crs(4326)
+    )
+
+    if metric not in plot_gdf.columns:
+        raise ValueError(
+            f"Missing metric column: {metric}"
+        )
+
+    plot_gdf[metric] = pd.to_numeric(
+        plot_gdf[metric],
+        errors="coerce",
+    )
+
+    if plot_gdf[metric].dropna().empty:
+        raise ValueError(
+            f"{metric} has no valid values."
+        )
+
+    quintile_column = (
+        f"{metric}_quintile"
+    )
+
+    quintile_code_column = (
+        f"{metric}_quintile_code"
+    )
+
+    plot_gdf[
+        quintile_column
+    ] = assign_quintiles(
+        plot_gdf[metric]
+    )
+
+    quintile_code_map = {
+        "Q1 — Lowest": 1,
+        "Q2": 2,
+        "Q3": 3,
+        "Q4": 4,
+        "Q5 — Highest": 5,
+    }
+
+    plot_gdf[
+        quintile_code_column
+    ] = (
+        plot_gdf[
+            quintile_column
+        ]
+        .map(
+            quintile_code_map
+        )
+        .astype(float)
+    )
+
+    tooltip_fields = [
+        "GEOID",
+    ]
+
+    tooltip_aliases = [
+        "Census tract GEOID",
+    ]
+
+    if "NAME" in plot_gdf.columns:
+        tooltip_fields.append(
+            "NAME"
+        )
+
+        tooltip_aliases.append(
+            "Geography"
+        )
+
+    tooltip_fields.extend(
+        [
+            metric,
+            quintile_column,
+        ]
+    )
+
+    tooltip_aliases.extend(
+        [
+            value_alias,
+            "Quintile",
+        ]
+    )
+
+    keep_columns = list(
+        dict.fromkeys(
+            [
+                "GEOID",
+                metric,
+                quintile_column,
+                quintile_code_column,
+                *tooltip_fields,
+                "geometry",
+            ]
+        )
+    )
+
+    plot_gdf = plot_gdf[
+        [
+            column
+            for column in keep_columns
+            if column in plot_gdf.columns
+        ]
+    ].copy()
+
+    for column in plot_gdf.columns:
+        if column == "geometry":
+            continue
+
+        if pd.api.types.is_datetime64_any_dtype(
+            plot_gdf[column]
+        ):
+            plot_gdf[column] = (
+                plot_gdf[column]
+                .astype(str)
+            )
+
+        elif (
+            plot_gdf[column].dtype
+            == "object"
+        ):
+            plot_gdf[column] = (
+                plot_gdf[column]
+                .map(
+                    lambda value: (
+                        value.isoformat()
+                        if isinstance(
+                            value,
+                            pd.Timestamp,
+                        )
+                        else value
+                    )
+                )
+            )
+
+    geojson_data = json.loads(
+        plot_gdf.to_json(
+            default=str
+        )
+    )
+
+    bounds = plot_gdf.total_bounds
+
+    map_object = folium.Map(
+        tiles="CartoDB positron",
+        control_scale=True,
+    )
+
+    folium.Choropleth(
+        geo_data=geojson_data,
+        data=plot_gdf,
+        columns=[
+            "GEOID",
+            quintile_code_column,
+        ],
+        key_on=(
+            "feature.properties.GEOID"
+        ),
+        fill_color=palette,
+        fill_opacity=0.82,
+        line_color="#555555",
+        line_weight=0.8,
+        line_opacity=0.85,
+        nan_fill_color="#d9d9d9",
+        nan_fill_opacity=0.75,
+        threshold_scale=[
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+        ],
+        legend_name=None,
+        highlight=False,
+    ).add_to(
+        map_object
+    )
+
+    folium.GeoJson(
+        geojson_data,
+        style_function=lambda feature: {
+            "fillOpacity": 0,
+            "color": "#555555",
+            "weight": 0.8,
+        },
+        highlight_function=lambda feature: {
+            "weight": 2,
+            "color": "#111111",
+        },
+        tooltip=folium.GeoJsonTooltip(
+            fields=tooltip_fields,
+            aliases=tooltip_aliases,
+            localize=True,
+            sticky=False,
+            labels=True,
+        ),
+    ).add_to(
+        map_object
+    )
+
+    map_object.fit_bounds(
+        [
+            [
+                bounds[1],
+                bounds[0],
+            ],
+            [
+                bounds[3],
+                bounds[2],
+            ],
+        ]
+    )
+
+    add_map_title(
+        map_object=map_object,
+        title=title,
+    )
+
+    add_quintile_legend(
+        map_object=map_object,
+        palette=palette,
+    )
+
+    output_path = (
+        MAP_OUTPUT_DIR
+        / output_filename
+    )
+
+    map_object.save(
+        str(output_path)
+    )
+
+    return map_object
+```
+
+```{python}
+if not CLEAN_FILE.exists():
+    raise FileNotFoundError(
+        f"Clean language file not found: {CLEAN_FILE}"
+    )
+
+if not BOUNDARY_FILE.exists():
+    raise FileNotFoundError(
+        f"Boundary file not found: {BOUNDARY_FILE}"
+    )
+
+language = pd.read_csv(
+    CLEAN_FILE,
+    dtype={
+        "GEOID": str,
+    },
+)
+
+tracts = gpd.read_file(
+    BOUNDARY_FILE
+)
+
+language = prepare_geoid(
+    language
+)
+
+tracts = prepare_geoid(
+    tracts
+)
+
+language_map = tracts.merge(
+    language,
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+).to_crs(
+    4326
+)
+
+if not language_map["GEOID"].is_unique:
+    raise ValueError(
+        "GEOID is not unique after the geographic merge."
+    )
+```
+
+```{python}
+lep_household_map = make_quintile_map(
+    gdf=language_map,
+    metric="lep_household_share",
+    title=(
+        "Limited-English-Proficient "
+        "Households"
+    ),
+    value_alias="LEP household share (%)",
+    palette="YlOrRd",
+    output_filename="lep_household_share.html",
+)
+
+display(
+    lep_household_map
+)
+```
+
+```{python}
+senior_lep_map = make_quintile_map(
+    gdf=language_map,
+    metric=(
+        "senior_asian_pacific_lep_count"
+    ),
+    title=(
+        "Asian/Pacific-Language-Speaking "
+        "Seniors with Limited English Proficiency"
+    ),
+    value_alias=(
+        "Senior Asian/Pacific-language "
+        "LEP count"
+    ),
+    palette="PuRd",
+    output_filename=(
+        "senior_asian_pacific_lep_count.html"
+    ),
+)
+
+display(
+    senior_lep_map
+)
+```
