@@ -2,6 +2,7 @@
 It uses only local project data and writes:
     data/clean/housing_and_affordability_tract.csv
     data/clean/housing_and_affordability_subsidized_points.csv
+    data/clean/housing_and_affordability_new_construction_points.csv
 """
 
 # Import the packages used for tabular, spatial, PDF, and file processing.
@@ -421,6 +422,27 @@ recent_construction["new_affordable_properties_since_2018"] = 1
 construction_metrics = recent_construction.groupby("GEOID", as_index=False)[
     ["new_affordable_properties_since_2018", "new_affordable_units_since_2018"]
 ].sum()
+
+# Building-level export for point/bubble maps: one row per new-construction
+# property, keeping its own coordinates rather than collapsing to the tract
+# centroid. Coordinates/address come from the BBL-level file via ref_bbl.
+NEW_CONSTRUCTION_POINTS_PATH = (
+    CLEAN_DIR / "housing_and_affordability_new_construction_points.csv"
+)
+new_construction_points = recent_construction.merge(
+    furman_bbl_mapped[["bbl", "standard_address", "latitude", "longitude"]].rename(
+        columns={"bbl": "ref_bbl"}
+    ),
+    on="ref_bbl",
+    how="left",
+    validate="one_to_one",
+).rename(columns={"ref_bbl": "bbl"})[
+    ["bbl", "standard_address", "GEOID", "latitude", "longitude", "new_affordable_units_since_2018"]
+]
+new_construction_points.to_csv(NEW_CONSTRUCTION_POINTS_PATH, index=False)
+print(
+    f"Wrote {len(new_construction_points)} new-construction building points to {NEW_CONSTRUCTION_POINTS_PATH}"
+)
 
 
 # Housing-related health conditions

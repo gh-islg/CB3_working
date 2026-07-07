@@ -22,9 +22,9 @@ representative dimensions:
 4. New affordable housing: `new_affordable_units_since_2018`
 5. Housing quality: `hpd_open_class_bc`
 
-Each metric is first presented on a separate map. The final map includes all
-five as selectable overlay layers. Map HTML files are written to
-`maps/housing_and_affordability/`.
+Each metric is presented on its own map, as a bubble layer sized by magnitude
+over selectable demographic choropleth base layers. Map HTML files are written
+to `maps/housing_and_affordability/`.
 
 The notebook also reads the clean CB3 tract baseline profile and creates one
 selectable-layer demographics map for median household income, age, race and
@@ -47,22 +47,13 @@ for candidate in [Path.cwd(), *Path.cwd().parents]:
         sys.path.insert(0, str(candidate))
         break
 
-from src.demographic_profile_panel import (
-    DEFAULT_DEMOGRAPHIC_PROFILE_SPECS as PROFILE_DEMOGRAPHIC_SPECS,
-    PROFILE_CLICK_CALLBACK,
-    add_demographic_profile_panel,
-    add_profile_click_layer,
-)
 from src.map_utils import (
     add_bubble_layer,
-    add_dynamic_metric_legend,
     add_map_title,
     add_metric_layer,
     add_zero_value_legend,
     find_project_dir,
-    format_metric_value,
     make_base_map,
-    make_step_colormap,
 )
 ```
 
@@ -71,13 +62,16 @@ from src.map_utils import (
 # notebook works whether it is rendered from the root folder or from scripts/.
 PROJECT_DIR = find_project_dir()
 CLEAN_DATA_PATH = (
-    PROJECT_DIR / "data" / "clean" / "housing_and_affordability.csv"
+    PROJECT_DIR / "data" / "clean" / "housing_and_affordability_tract.csv"
 )
 BASELINE_PROFILE_PATH = (
     PROJECT_DIR / "data" / "clean" / "cb3_tract_baseline_profile_clean.csv"
 )
 SUBSIDIZED_POINTS_PATH = (
     PROJECT_DIR / "data" / "clean" / "housing_and_affordability_subsidized_points.csv"
+)
+NEW_CONSTRUCTION_POINTS_PATH = (
+    PROJECT_DIR / "data" / "clean" / "housing_and_affordability_new_construction_points.csv"
 )
 TRACT_GEOMETRY_PATH = (
     PROJECT_DIR / "data" / "raw" / "Geography" / "2020_Census_Tracts_20260505.geojson"
@@ -151,6 +145,16 @@ subsidized_points = subsidized_points.merge(
     how="left",
     validate="many_to_one",
 )
+
+# Read building-level new-construction-since-2018 points (native lat/lon, not
+# collapsed to a tract centroid) and attach tract/NTA labels for tooltips.
+new_construction_points = pd.read_csv(NEW_CONSTRUCTION_POINTS_PATH, dtype={"GEOID": "string"})
+new_construction_points = new_construction_points.merge(
+    tracts[["GEOID", "tract_label", "nta_name"]],
+    on="GEOID",
+    how="left",
+    validate="many_to_one",
+)
 ```
 
 ```{python}
@@ -194,68 +198,60 @@ for metric in DEMOGRAPHIC_SPECS:
 def base_map():
     return make_base_map(tracts)
 
-
-# Demographic panel helpers are imported from scripts/demographic_profile_panel.py.
-
-
-def build_metric_legend_payload():
-    # Build legend bins from the same quantile logic used by make_step_colormap().
-    legend_payload = {}
-    quantiles = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-
-    for metric, spec in METRIC_SPECS.items():
-        numeric_values = pd.to_numeric(tracts[metric], errors="coerce").dropna()
-        if spec.get("positive_values_only", False):
-            numeric_values = numeric_values[numeric_values > 0]
-
-        breaks = sorted(set(float(value) for value in numeric_values.quantile(quantiles)))
-        if len(breaks) == 1:
-            breaks = [breaks[0], breaks[0] + 1]
-
-        entries = []
-        if spec.get("positive_values_only", False):
-            entries.append(
-                {
-                    "color": spec["zero_color"],
-                    "label": "0 units",
-                }
-            )
-
-        colors = spec["palette"][: max(len(breaks) - 1, 0)]
-        for index, color in enumerate(colors):
-            lower = format_metric_value(breaks[index], spec["unit"])
-            upper = format_metric_value(breaks[index + 1], spec["unit"])
-            entries.append(
-                {
-                    "color": color,
-                    "label": f"{lower} to {upper}",
-                }
-            )
-
-        legend_payload[spec["dimension"]] = {
-            "title": spec["dimension"],
-            "subtitle": spec["label"],
-            "entries": entries,
-        }
-
-    return legend_payload
-
-
-
-
 ```
 
 ```{python}
-def create_single_metric_map(metric):
+def create_single_metric_map(
+    metric,
+    points=None,
+    lat_col="tract_centroid_latitude",
+    lon_col="tract_centroid_longitude",
+    tooltip_fields=["tract_label", "nta_name"],
+    tooltip_aliases=["Census tract", "NTA"],
+):
+    # Choropleth layer: demographic fills, selectable one at a time (radio
+    # buttons), for geographic/demographic context. Point layer on top: one
+    # bubble sized by magnitude. By default the bubble sits at the tract
+    # centroid, since most metrics here are only reported at the tract level.
+    # Metrics with native, finer-grained coordinates (e.g. individual building
+    # addresses) should pass their own ``points``/``lat_col``/``lon_col``
+    # instead, since collapsing them to a tract centroid would discard real
+    # location detail.
     spec = METRIC_SPECS[metric]
     map_object = base_map()
-    add_metric_layer(map_object, tracts, metric, spec, show=True, add_legend=True)
+
+    for index, demographic in enumerate(DEMOGRAPHIC_SPECS):
+        add_metric_layer(
+            map_object, tracts, demographic, DEMOGRAPHIC_SPECS[demographic],
+            show=index == 0, add_legend=False, overlay=False,
+        )
+
+    add_bubble_layer(
+        map_object,
+        tracts if points is None else points,
+        metric,
+        spec["label"],
+        spec["unit"],
+        name=spec["dimension"],
+        lat_col=lat_col,
+        lon_col=lon_col,
+        tooltip_fields=tooltip_fields,
+        tooltip_aliases=tooltip_aliases,
+        show=True,
+        overlay=True,
+    )
     add_map_title(
         map_object,
         f"CB3 Housing & Affordability: {spec['dimension']}",
-        spec["label"],
+        "Choropleth: use the layer control to pick a demographic fill. "
+        f"Bubbles: {spec['label']}.",
     )
-    folium.LayerControl(collapsed=False).add_to(map_object)
+    add_zero_value_legend(
+        map_object,
+        "#d9d9d9",
+        "Demographic data not available",
+    )
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
     output_path = MAP_OUTPUT_DIR / spec["filename"]
     map_object.save(output_path)
     return map_object
@@ -282,24 +278,47 @@ crowded_housing_map
 ```
 
 ### Subsidized properties at risk
-The colormap has 5 steps, but the break values bunch up at the low end:
-
-33 → 49 → 65 → 94 → 171 → 599
-
-Looks strange on legend due to the compression. Should it be logged?
 
 ```{python}
+# Subsidized housing is reported at the building level, not the tract level,
+# so bubbles use each building's own coordinates rather than a tract centroid.
 subsidized_housing_at_risk_map = create_single_metric_map(
-    "subsidized_units_expiring_2025_2030"
+    "subsidized_units_expiring_2025_2030",
+    points=subsidized_points,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["standard_address", "tract_label"],
+    tooltip_aliases=["Address", "Census tract"],
 )
 subsidized_housing_at_risk_map
+```
+
+### Subsidized properties at risk (2031–2040)
+
+```{python}
+subsidized_housing_at_risk_2031_2040_map = create_single_metric_map(
+    "subsidized_units_expiring_2031_2040",
+    points=subsidized_points,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["standard_address", "tract_label"],
+    tooltip_aliases=["Address", "Census tract"],
+)
+subsidized_housing_at_risk_2031_2040_map
 ```
 
 ### New affordable housing
 
 ```{python}
+# New construction is reported at the building level, not the tract level, so
+# bubbles use each building's own coordinates rather than a tract centroid.
 new_affordable_housing_map = create_single_metric_map(
-    "new_affordable_units_since_2018"
+    "new_affordable_units_since_2018",
+    points=new_construction_points,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["standard_address", "tract_label"],
+    tooltip_aliases=["Address", "Census tract"],
 )
 new_affordable_housing_map
 ```
@@ -311,61 +330,6 @@ housing_quality_map = create_single_metric_map(
     "hpd_open_class_bc"
 )
 housing_quality_map
-```
-
-## Combined selectable-layer map
-
-```{python}
-# Add all five dimensions to one map. Severe rent burden is visible initially;
-# the other layers can be turned on and off through the layer control.
-combined_map = base_map()
-
-for index, metric in enumerate(METRIC_SPECS):
-    add_metric_layer(
-        combined_map, tracts, metric, METRIC_SPECS[metric],
-        show=index == 0, add_legend=False, overlay=False,
-    )
-
-add_map_title(
-    combined_map,
-    "CB3 Housing & Affordability: Five tract-level dimensions",
-    "Use the layer control in the upper-right to select severe rent burden, crowding, subsidized units at risk, new affordable units, or open Class B/C violations.",
-)
-folium.LayerControl(collapsed=False, position="topright").add_to(combined_map)
-
-combined_output_path = MAP_OUTPUT_DIR / "housing_and_affordability_layers.html"
-combined_map.save(combined_output_path)
-combined_map
-```
-
-## Housing map with demographic profile panel
-
-```{python}
-# This version keeps the housing metric layers on the left and adds a right-side
-# demographic profile panel. Clicking any tract updates the panel and shows
-# where that tract falls within the CB3 tract distribution for each demographic.
-profile_panel_map = base_map()
-
-for index, metric in enumerate(METRIC_SPECS):
-    add_metric_layer(
-        profile_panel_map, tracts, metric, METRIC_SPECS[metric],
-        show=index == 0, add_legend=False, overlay=False,
-        on_each_feature=PROFILE_CLICK_CALLBACK,
-    )
-
-profile_click_layer = add_profile_click_layer(profile_panel_map, tracts)
-add_demographic_profile_panel(profile_panel_map, tracts, click_layer=profile_click_layer)
-add_dynamic_metric_legend(
-    profile_panel_map,
-    build_metric_legend_payload(),
-    next(iter(METRIC_SPECS.values()))["dimension"],
-    legend_id="housing-metric-legend",
-)
-folium.LayerControl(collapsed=False, position="topright").add_to(profile_panel_map)
-
-profile_panel_output_path = MAP_OUTPUT_DIR / "housing_metrics_with_demographic_profile.html"
-profile_panel_map.save(profile_panel_output_path)
-profile_panel_map
 ```
 
 ## Demographic context map
@@ -426,12 +390,13 @@ add_bubble_layer(
     show=True,
     overlay=True,
 )
+subsidized_2031_2040_spec = METRIC_SPECS["subsidized_units_expiring_2031_2040"]
 add_bubble_layer(
     demographic_bubble_map,
     subsidized_points,
     "subsidized_units_expiring_2031_2040",
-    SUBSIDIZED_2031_2040_SPEC["label"],
-    SUBSIDIZED_2031_2040_SPEC["unit"],
+    subsidized_2031_2040_spec["label"],
+    subsidized_2031_2040_spec["unit"],
     name="Subsidized units expiring 2031-2040",
     tooltip_fields=["standard_address", "tract_label"],
     tooltip_aliases=["Address", "Census tract"],
@@ -469,8 +434,6 @@ demographic_bubble_map
 expected_map_files = [
     MAP_OUTPUT_DIR / spec["filename"] for spec in METRIC_SPECS.values()
 ] + [
-    combined_output_path,
-    profile_panel_output_path,
     demographics_output_path,
     demographic_bubble_output_path,
 ]
