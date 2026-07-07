@@ -441,6 +441,61 @@ no_routine_checkup_pct:
   display_format: percent
   filename: no_routine_checkup_pct.html
 
+# --- Economic Security & Food ---
+
+poverty_rate_pct:
+  domain: economic-food
+  short_label: Poverty rate
+  label: Population below poverty level
+  description: >
+    Percentage of the tract population whose income in the past 12 months
+    was below the poverty level.
+  unit: "%"
+  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
+  source: ACS 5-year estimates, table B17020
+  year: 2024
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: poverty_rate_pct.html
+
+food_supply_gap_rank:
+  domain: economic-food
+  short_label: Food supply gap rank
+  label: Emergency food supply gap rank
+  description: >
+    Emergency food supply gap rank joined to CB3 census tracts.
+    This metric is reported at the NTA level and may repeat across
+    multiple tracts within the same NTA.
+  unit: " rank"
+  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
+  source: Emergency Food Supply Gap dataset
+  year: 2026
+  geography: NTA joined to census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: number
+  filename: food_supply_gap_rank.html
+
+food_supply_gap_score:
+  domain: economic-food
+  short_label: Food supply gap score
+  label: Emergency food supply gap weighted score
+  description: >
+    Weighted emergency food supply gap score joined to CB3 census tracts.
+    This metric is reported at the NTA level and may repeat across
+    multiple tracts within the same NTA.
+  unit: " score"
+  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
+  source: Emergency Food Supply Gap dataset, Weighted_Score
+  year: 2026
+  geography: NTA joined to census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: number
+  filename: food_supply_gap_score.html
+
 # --- Language Access ---
 
 lep_household_share:
@@ -460,33 +515,3 @@ lep_household_share:
     - "#f03b20"
     - "#bd0026"
   source: ACS 2020-2024 5-year estimates, table C16002
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: quintile
-  display_format: percent
-  filename: lep_household_share.html
-
-senior_asian_pacific_lep_count:
-  domain: language_access
-  short_label: Senior Asian/Pacific LEP count
-  label: Asian/Pacific-language-speaking seniors with limited English proficiency
-  description: >
-    Estimated number of residents age 65 and older who speak an Asian or
-    Pacific Island language and speak English less than very well, calculated
-    from B16004_062E + B16004_063E. The exact ACS cell labels should be
-    confirmed against the source metadata before publication.
-  unit: " people"
-  palette:
-    - "#fff7f3"
-    - "#fde0dd"
-    - "#fa9fb5"
-    - "#c51b8a"
-    - "#7a0177"
-  source: ACS 2020-2024 5-year estimates, table B16004
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: quintile
-  display_format: number
-  filename: senior_asian_pacific_lep_count.html
