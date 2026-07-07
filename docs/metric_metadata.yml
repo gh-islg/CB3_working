@@ -256,3 +256,83 @@ no_routine_checkup_pct:
   map_classification: quintile
   display_format: percent
   filename: no_routine_checkup_pct.html
+
+# --- Education ---
+
+pta_fundraising_total:
+  domain: education
+  short_label: PTA fundraising
+  label: Total PTA income, summed across schools in tract
+  description: >
+    Sum of reported total PTA income (pta_tot_inc) across all public schools
+    located in the tract. Tracts with no schools are shown as missing rather
+    than $0, since PTA fundraising is not a meaningful concept where there is
+    no school.
+  unit: "$"
+  palette: ["#f7fcf5", "#c7e9c0", "#74c476", "#238b45", "#00441b"]
+  source: NYC PTA financial reporting 2024–25, joined to LCGMS school locator
+  year: 2025
+  geography: Census tract (aggregated from school points)
+  map_classification: quintile
+  display_format: dollar
+  filename: pta_fundraising_total.html
+
+n_students_temp_housing_total:
+  domain: education
+  short_label: Students in temporary housing
+  label: Students in temporary housing, summed across schools in tract
+  description: >
+    Sum of reported students in temporary housing (n_students_temp_housing)
+    across all public schools located in the tract. Tracts with no schools
+    are shown as missing rather than 0.
+  unit: " students"
+  palette: ["#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"]
+  source: NYC DOE Students in Temporary Housing report 2025, joined to LCGMS school locator
+  year: 2025
+  geography: Census tract (aggregated from school points)
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+  filename: n_students_temp_housing_total.html
+
+prek_seats_per_100_under5:
+  domain: education
+  short_label: PreK seat coverage
+  label: PreK seats per 100 children under age 5
+  description: >
+    Sum of PreK seats (prek_seats_2122) across all public schools in the
+    tract, divided by the tract's under-5 population (ACS table B01001) and
+    multiplied by 100. Tracts with no schools are shown as missing. Note that
+    CB3's District 1 uses citywide/choice-based elementary enrollment rather
+    than neighborhood zoning, so a school's seats are not necessarily meant
+    to serve only the tract it sits in — tracts with few residents but a
+    large school building can show high or extreme ratios.
+  unit: " seats per 100 children"
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: "NYC DOE PreK seat counts (2021–22 SY), joined to LCGMS school locator; denominator from ACS 5-year estimates, table B01001"
+  year: 2022
+  geography: Census tract (aggregated from school points; population from ACS)
+  higher_is: better
+  map_classification: quintile
+  display_format: rate
+  filename: prek_seats_per_100_under5.html
+
+threek_seats_per_100_under5:
+  domain: education
+  short_label: 3-K seat coverage
+  label: 3-K seats per 100 children under age 5
+  description: >
+    Sum of 3-K seats (threek_seats_2122) across all public schools in the
+    tract, divided by the tract's under-5 population (ACS table B01001) and
+    multiplied by 100. Tracts with no schools are shown as missing. Same
+    zoning caveat as PreK seat coverage: District 1 enrollment is
+    citywide/choice-based, not neighborhood-zoned.
+  unit: " seats per 100 children"
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: "NYC DOE 3-K seat counts (2021–22 SY), joined to LCGMS school locator; denominator from ACS 5-year estimates, table B01001"
+  year: 2022
+  geography: Census tract (aggregated from school points; population from ACS)
+  higher_is: better
+  map_classification: quintile
+  display_format: rate
+  filename: threek_seats_per_100_under5.html

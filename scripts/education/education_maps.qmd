@@ -1,0 +1,322 @@
+---
+format:
+  html:
+    self-contained: true
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+import sys
+from pathlib import Path
+
+# ------------------------------------------------------------
+# Find project root and make src/ importable
+# ------------------------------------------------------------
+PROJECT_DIR = Path.cwd()
+
+while not (PROJECT_DIR / "src").exists() and PROJECT_DIR != PROJECT_DIR.parent:
+    PROJECT_DIR = PROJECT_DIR.parent
+
+if not (PROJECT_DIR / "src").exists():
+    raise FileNotFoundError("Could not find project root containing src/ folder.")
+
+sys.path.insert(0, str(PROJECT_DIR))
+
+import yaml
+import pandas as pd
+from IPython.display import display, HTML
+
+from src.cb3_utils import load_cb3_tract_universe
+from src.map_utils import add_metric_layer, make_base_map
+
+DOMAIN = "education"
+
+SCHOOL_LEVEL_PATH = PROJECT_DIR / "data" / "clean" / "EDUCATION_DOMAIN_school_level_analytic_file.csv"
+TRACT_LEVEL_PATH = PROJECT_DIR / "data" / "clean" / "EDUCATION_DOMAIN_tract_level_analytic_file.csv"
+CLEAN_OUTPUT_PATH = PROJECT_DIR / "data" / "clean" / "education.csv"
+METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
+MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "education"
+MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+```
+
+
+## Page-level CSS
+
+```{python}
+# Hide Quarto title chrome and shrink Leaflet controls, matching the other
+# domain map notebooks.
+display(
+    HTML(
+        """
+        <style>
+        h1.title { display: none; }
+        .quarto-title-block { display: none; }
+        .cell-output-stdout { display: none; }
+        .leaflet-control-container .legend,
+        .leaflet-control-container .branca,
+        .leaflet-control-container .colormap,
+        .leaflet-control-container .leaflet-control {
+            font-size: 12px;
+        }
+        .education-map-title {
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            margin-top: 24px;
+            margin-bottom: 8px;
+        }
+        </style>
+        """
+    )
+)
+```
+
+
+## Load the official 31-tract CB3 universe and geometry
+
+```{python}
+tracts_lookup, cb3_tract_geometry, CB3_TRACT_CODES, CB3_GEOIDS = load_cb3_tract_universe(PROJECT_DIR)
+```
+
+
+## Load tract-level under-5 population
+
+School level data does not have `GEOID`, so have to construct to generate the key.
+
+```{python}
+def load_tract_population(path):
+    """Load the tract-level ACS extract and return GEOID plus under-5 population.
+
+    Builds GEOID from the state/county/tract columns (same convention as
+    src.cb3_utils.add_acs_geoid) and validates against the 31-tract CB3 universe.
+    """
+    frame = pd.read_csv(path)
+    frame["GEOID"] = (
+        frame["state"].astype(int).astype(str).str.zfill(2)
+        + frame["county"].astype(int).astype(str).str.zfill(3)
+        + frame["tract"].astype(int).astype(str).str.zfill(6)
+    )
+    assert set(frame["GEOID"]) == CB3_GEOIDS, "Tract-level file does not match the 31 CB3 tracts."
+    return frame[["GEOID", "tot_under_5"]]
+
+
+tract_population = load_tract_population(TRACT_LEVEL_PATH)
+```
+
+**Summary:** Reads the tract-level ACS extract, rebuilds the standard 11-digit
+GEOID from `state`/`county`/`tract`, and keeps only the under-5 population
+column needed for the seats-vs-population ratio. Verify: the assertion
+confirms all 31 CB3 tracts are present with no extras.
+
+
+## Load school-level metrics and flag any schools outside the 31 CB3 tracts
+
+```{python}
+def load_school_metrics(path, cb3_geoids):
+    """Load the school-level file and assign each school a tract GEOID.
+
+    All CB3 schools are in New York County (state 36, county 061), so GEOID is
+    built directly from the school-level `tract` column (zero-padded to 6
+    digits) rather than from state/county columns, which are not present in
+    this file. Schools whose tract code does not match one of the 31 CB3
+    tracts are flagged and excluded from the tract aggregation, since we do
+    not have coordinates to geocode them as a fallback.
+    """
+    frame = pd.read_csv(path)
+    frame["GEOID"] = "36061" + frame["tract"].astype(int).astype(str).str.zfill(6)
+
+    unmatched = frame.loc[~frame["GEOID"].isin(cb3_geoids)]
+    if len(unmatched):
+        display(
+            HTML(
+                "<p><strong>Flagged:</strong> "
+                f"{len(unmatched)} school(s) have a tract code that does not match "
+                "any of the 31 CB3 tracts and are excluded from the tract "
+                "aggregation below (see 'name', 'tract' columns):</p>"
+                + unmatched[["name", "tract", "GEOID"]].to_html(index=False)
+            )
+        )
+
+    return frame.loc[frame["GEOID"].isin(cb3_geoids)].copy()
+
+
+school_metrics = load_school_metrics(SCHOOL_LEVEL_PATH, CB3_GEOIDS)
+```
+
+**Summary:** Assigns each school a GEOID from its `tract` column and drops
+schools that don't match a CB3 tract, displaying them for review. Verify:
+check the flagged table above — currently one school (tract code `4000`,
+which does not match the split tracts `4001`/`4002`) is expected to appear
+and is excluded rather than guessed at.
+
+
+## Aggregate school-level metrics to the tract level
+
+```{python}
+def aggregate_school_metrics_to_tract(school_frame, cb3_geoids):
+    """Sum school-level metrics up to one row per CB3 tract.
+
+    Uses sum(min_count=1) rather than plain sum, since pandas' default sum
+    treats an all-missing group as summing to 0 rather than NaN — which would
+    otherwise turn "no school in this tract reported this metric" into a
+    false "$0 raised" or "0 students in temporary housing." A school with no
+    PreK program contributes a real 0 to the tract total (it's not missing
+    data), but a school that simply didn't report PTA revenue contributes
+    nothing countable. Tracts with no schools at all also get NaN for every
+    metric, for the same reason. PreK and 3-K seats are kept as separate
+    metrics rather than combined, since they are different programs.
+    """
+    grouped = school_frame.groupby("GEOID").agg(
+        school_count=("GEOID", "size"),
+        pta_fundraising_total=("pta_tot_inc", lambda values: values.sum(min_count=1)),
+        n_students_temp_housing_total=("n_students_temp_housing", lambda values: values.sum(min_count=1)),
+        prek_seats_total=("prek_seats_2122", lambda values: values.sum(min_count=1)),
+        threek_seats_total=("threek_seats_2122", lambda values: values.sum(min_count=1)),
+    )
+
+    # Reindex to all 31 CB3 tracts so tracts with zero schools are represented.
+    grouped = grouped.reindex(sorted(cb3_geoids))
+    grouped["school_count"] = grouped["school_count"].fillna(0)
+
+    no_school_mask = grouped["school_count"] == 0
+    metric_columns = [
+        "pta_fundraising_total",
+        "n_students_temp_housing_total",
+        "prek_seats_total",
+        "threek_seats_total",
+    ]
+    grouped.loc[no_school_mask, metric_columns] = pd.NA
+
+    return grouped.reset_index()
+
+
+tract_school_metrics = aggregate_school_metrics_to_tract(school_metrics, CB3_GEOIDS)
+```
+
+**Summary:** Groups the 41 matched schools by tract, summing PTA income,
+students in temporary housing, PreK seats, and 3-K seats (kept separate),
+then reindexes to all 31 CB3 tracts so tracts with no school show up as
+missing (gray on the map) rather than zero. Verify: spot-check
+`school_count` against a known multi-school tract, and confirm tracts with
+`school_count == 0` show `NaN` for all four metric columns.
+
+
+## Combine into one tract-level education table and compute the seats ratio
+
+```{python}
+def build_education_tract_table(tract_school_metrics, tract_population):
+    """Join aggregated school metrics to under-5 population and compute the
+    PreK and 3-K seats coverage ratios (seats per 100 children under 5), kept
+    as two separate metrics since PreK and 3-K are different programs.
+    """
+    combined = tract_school_metrics.merge(tract_population, on="GEOID", how="left", validate="one_to_one")
+    combined["prek_seats_per_100_under5"] = combined["prek_seats_total"] / combined["tot_under_5"] * 100
+    combined["threek_seats_per_100_under5"] = combined["threek_seats_total"] / combined["tot_under_5"] * 100
+    return combined
+
+
+education_tracts = build_education_tract_table(tract_school_metrics, tract_population)
+education_tracts.to_csv(CLEAN_OUTPUT_PATH, index=False)
+```
+
+**Summary:** Merges the tract-level school aggregates with under-5
+population and computes PreK and 3-K seats per 100 under-5 children as two
+separate columns, then writes the one-row-per-tract table to
+`data/clean/education.csv`. Verify: confirm the output has exactly 31 rows
+and that both ratio columns are `NaN` wherever the corresponding seats total
+is `NaN` (no schools in tract).
+
+
+## Join metrics to tract geometry for mapping
+
+```{python}
+tracts = cb3_tract_geometry.merge(education_tracts, on="GEOID", how="left", validate="one_to_one")
+tracts = tracts.merge(
+    tracts_lookup[["GEOID", "tract_label", "nta_name"]],
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
+
+assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
+assert tracts["GEOID"].is_unique, "GEOID is not unique after merge."
+```
+
+
+## Load metric metadata and select education metrics to map
+
+```{python}
+with open(METADATA_PATH) as f:
+    all_metrics = yaml.safe_load(f)
+
+metric_specs = {
+    var: meta
+    for var, meta in all_metrics.items()
+    if meta.get("domain") == DOMAIN
+}
+
+metrics_to_map = [
+    "pta_fundraising_total",
+    "n_students_temp_housing_total",
+    "prek_seats_per_100_under5",
+    "threek_seats_per_100_under5",
+]
+
+metrics_to_map = [
+    metric
+    for metric in metrics_to_map
+    if metric in metric_specs and metric in tracts.columns
+]
+
+if not metrics_to_map:
+    raise ValueError(
+        "No education metrics found to map. Check docs/metric_metadata.yml "
+        "and data/clean/education.csv."
+    )
+```
+
+
+## Create one map per metric
+
+```{python}
+for metric in metrics_to_map:
+    meta = metric_specs[metric]
+
+    display(
+        HTML(
+            f"""
+            <div class="education-map-title">
+                {meta["label"]}
+            </div>
+            """
+        )
+    )
+
+    spec = {
+        "dimension": meta["short_label"],
+        "label": meta["label"],
+        "unit": meta["unit"],
+        "palette": meta["palette"],
+    }
+
+    for optional_key in ["positive_values_only", "zero_color", "zero_label"]:
+        if optional_key in meta:
+            spec[optional_key] = meta[optional_key]
+
+    m = make_base_map(tracts)
+
+    add_metric_layer(
+        m,
+        tracts,
+        metric,
+        spec,
+        show=True,
+        overlay=False,
+    )
+
+    m.save(MAP_OUTPUT_DIR / meta["filename"])
+    display(m)
+```
