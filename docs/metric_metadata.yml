@@ -163,27 +163,6 @@ ej_area_flag:
   map_classification: binary
   display_format: flag
 
-heat_vulnerability_index:
-  domain: environment
-  short_label: Heat Vulnerability Index
-  label: Heat Vulnerability Index (HVI), 1 (lowest) to 5 (highest)
-  description: >
-    DOHMH's Heat Vulnerability Index ranks each ZIP Code Tabulation Area
-    (ZCTA) from 1 (lowest risk) to 5 (highest risk) of dying during and
-    immediately after extreme heat, based on surface temperature, green
-    space, home air conditioning access, and poverty/race. Reported by ZCTA,
-    not census tract; CB3-overlapping ZCTAs are selected by area overlap
-    with the CB3 tract boundary (see environment_heat_vulnerability.csv).
-  unit: ""
-  palette: ["#ffffb2", "#fecc5c", "#fd8d3c", "#f03b20", "#bd0026"]
-  source: DOHMH Heat Vulnerability Index Rankings (NYC OpenData)
-  year: 2024
-  geography: ZCTA (ZIP Code Tabulation Area)
-  higher_is: worse
-  map_classification: quintile
-  display_format: score
-  filename: heat_vulnerability_ej_trees.html
-
 rodent_active_inspections:
   domain: environment
   short_label: Rodent inspections

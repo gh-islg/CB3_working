@@ -2,7 +2,6 @@
 It uses only local project data and writes:
     data/clean/environment_tract.csv
     data/clean/environment_rodent_inspection_points.csv
-    data/clean/environment_heat_vulnerability.csv
     data/clean/environment_tree_points.csv
 """
 #%%
@@ -24,7 +23,6 @@ from src.cb3_utils import (
     add_polygon_centroids,
     assign_points_to_cb3_tract,
     load_cb3_tract_universe,
-    select_overlapping_geography,
 )
 
 # Define project paths and create the clean-data directory.
@@ -36,7 +34,6 @@ CLEAN_DIR = PROJECT_DIR / "data" / "clean"
 OUTPUT_PATH = CLEAN_DIR / "environment_tract.csv"
 LOG_PATH = CLEAN_DIR / "environment_log.txt"
 RODENT_INSPECTION_POINTS_PATH = CLEAN_DIR / "environment_rodent_inspection_points.csv"
-HEAT_VULNERABILITY_PATH = CLEAN_DIR / "environment_heat_vulnerability.csv"
 TREE_POINTS_PATH = CLEAN_DIR / "environment_tree_points.csv"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 #%%
@@ -158,39 +155,6 @@ rodent_insp_points.to_csv(RODENT_INSPECTION_POINTS_PATH, index=False)
 print(f"Wrote {len(rodent_insp_points)} rodent inspection building points to {RODENT_INSPECTION_POINTS_PATH}")
 #%%
 
-# Heat Vulnerability Index (DOHMH, reported by ZCTA)
-
-# HVI is reported by ZIP Code Tabulation Area (ZCTA), not census tract, so it
-# is kept as its own ZCTA-level table rather than merged into the 31-row
-# tract table. ZCTAs are selected by area overlap with the CB3 tract
-# boundary (not intersects/within), since intersects also matches ZCTAs that
-# only touch CB3 at a sliver (e.g. across the river), which would misstate
-# geographic relevance.
-zcta_geometry = gpd.read_file(GEOGRAPHY_DIR / "ZIP_Code_Tabulation_Areas_20260708.geojson")
-zcta_geometry["zcta5"] = zcta_geometry["zcta5"].astype(str)
-zcta_geometry = zcta_geometry[["zcta5", "geometry"]].to_crs("EPSG:4326")
-
-cb3_zctas = select_overlapping_geography(zcta_geometry, cb3_tract_geometry, min_overlap_pct=1.0)
-
-hvi = pd.read_csv(RAW_DIR / "Heat_Vulnerability_Index_Rankings_20260420.csv")
-hvi = hvi.rename(
-    columns={
-        "ZIP Code Tabulation Area (ZCTA) 2020": "zcta5",
-        "Heat Vulnerability Index (HVI)": "heat_vulnerability_index",
-    }
-)
-hvi["zcta5"] = hvi["zcta5"].astype(str)
-
-heat_vulnerability_metrics = cb3_zctas[["zcta5", "pct_of_cb3_covered"]].merge(
-    hvi, on="zcta5", how="left", validate="one_to_one"
-)
-heat_vulnerability_metrics = heat_vulnerability_metrics.sort_values("zcta5").reset_index(drop=True)
-heat_vulnerability_metrics.round({"pct_of_cb3_covered": 1}).to_csv(HEAT_VULNERABILITY_PATH, index=False)
-print(
-    f"Wrote {len(heat_vulnerability_metrics)} CB3-overlapping ZCTAs to {HEAT_VULNERABILITY_PATH}"
-)
-#%%
-
 # Street trees (NYC Parks 2015 TreesCount census)
 
 # File is citywide; filter to CB3 Manhattan (community board 103) and keep
@@ -303,9 +267,6 @@ log_lines = [
     "uses its primary (largest population-proportion) 2010 source tract.",
     f"Rodent inspections:    {rodent_insp_unallocated_count} active-result records not allocated to a tract",
     f"Street trees:          {tree_unallocated_count} Alive CB3-board records not allocated to a tract",
-    f"Heat Vulnerability Index: {len(heat_vulnerability_metrics)} ZCTAs selected by >=1% area overlap "
-    "with the CB3 tract boundary (see pct_of_cb3_covered in environment_heat_vulnerability.csv); "
-    "reported by ZCTA, not census tract, so kept as its own table.",
     "",
     "=== Data Availability ===",
     f"Sanitation cleanliness: Reported at cleaning section level (MN031-MN034). "
@@ -342,7 +303,6 @@ validation = pd.Series(
         "unique_geoids": clean["GEOID"].nunique(),
         "ej_area_tracts": clean["ej_area_flag"].sum(),
         "mapped_rodent_active_inspections": clean["rodent_active_inspections"].sum(),
-        "cb3_zctas": len(heat_vulnerability_metrics),
         "mapped_alive_trees": len(tree_points),
     }
 )

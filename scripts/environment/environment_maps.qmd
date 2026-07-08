@@ -18,20 +18,18 @@ representative dimensions:
 
 1. Rodent inspections (confirmed activity): `rodent_active_inspections`
 2. Street and sidewalk cleanliness: `avg_acceptable_streets_pct`, `avg_acceptable_sidewalks_pct`
-3. Heat Vulnerability Index (by ZCTA), combined with the EJ Area overlay and
-   individual street trees colored by health status
+3. Street tree health: individual living street trees (2015 TreesCount census)
+   colored by health status (Good/Fair/Poor)
 4. EJ Area designation: `ej_area_flag` (shown as a hatched overlay on every map)
 
-Every metric is presented as a bubble layer sized by magnitude over selectable
-demographic choropleth base layers. Rodent inspections are point events with
-native building coordinates, so their bubbles plot at each building's own
-address. Street and sidewalk cleanliness are reported at the DSNY cleaning
-section level, not census tract, so their bubbles sit at each section's
-centroid instead. The Heat Vulnerability Index is reported by ZCTA (ZIP), so
-its bubbles sit at each ZCTA's centroid, with the ZCTA boundary drawn as an
-outline overlay and individual living street trees (2015 TreesCount census)
-plotted at their own coordinates, colored by health status. Map HTML files
-are written to `maps/environment/`.
+Every numeric metric is presented as a bubble layer sized by magnitude over
+selectable demographic choropleth base layers. Rodent inspections are point
+events with native building coordinates, so their bubbles plot at each
+building's own address. Street and sidewalk cleanliness are reported at the
+DSNY cleaning section level, not census tract, so their bubbles sit at each
+section's centroid instead. Street tree health has no magnitude to size by —
+each tree is plotted at its own coordinates as a fixed-size marker colored by
+category instead of a bubble. Map HTML files are written to `maps/environment/`.
 
 ```{python}
 # Import packages for tract data, geometry, classification, and interactive maps.
@@ -53,9 +51,12 @@ for candidate in [Path.cwd(), *Path.cwd().parents]:
 from src.cb3_utils import add_polygon_centroids
 from src.map_utils import (
     add_categorical_point_layer,
+    add_map_title,
+    add_metric_layer,
     add_zero_value_legend,
     build_metric_bubble_map,
     find_project_dir,
+    make_base_map,
 )
 ```
 
@@ -71,16 +72,12 @@ BASELINE_PROFILE_PATH = (
 RODENT_INSPECTION_POINTS_PATH = (
     PROJECT_DIR / "data" / "clean" / "environment_rodent_inspection_points.csv"
 )
-HEAT_VULNERABILITY_PATH = PROJECT_DIR / "data" / "clean" / "environment_heat_vulnerability.csv"
 TREE_POINTS_PATH = PROJECT_DIR / "data" / "clean" / "environment_tree_points.csv"
 TRACT_GEOMETRY_PATH = (
     PROJECT_DIR / "data" / "raw" / "Geography" / "2020_Census_Tracts_20260505.geojson"
 )
 SECTIONS_GEOMETRY_PATH = (
     PROJECT_DIR / "data" / "raw" / "Geography" / "DSNY_Sections_20260630.geojson"
-)
-ZCTA_GEOMETRY_PATH = (
-    PROJECT_DIR / "data" / "raw" / "Geography" / "ZIP_Code_Tabulation_Areas_20260708.geojson"
 )
 MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "environment"
 MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -177,7 +174,7 @@ def _to_map_spec(meta, include_filename=False):
             spec[key] = meta[key]
     return spec
 
-# Tract-level environment metrics (excludes ej_area_flag and section/ZCTA-level metrics).
+# Tract-level environment metrics (excludes ej_area_flag and section-level metrics).
 METRIC_SPECS = {
     var: _to_map_spec(meta, include_filename=True)
     for var, meta in ALL_METRICS.items()
@@ -185,7 +182,7 @@ METRIC_SPECS = {
         meta["domain"] == "environment"
         and var != "ej_area_flag"
         and "filename" in meta
-        and not meta.get("geography", "").startswith(("DSNY", "ZCTA"))
+        and not meta.get("geography", "").startswith("DSNY")
     )
 }
 
@@ -194,13 +191,6 @@ SECTION_METRIC_SPECS = {
     var: _to_map_spec(meta, include_filename=True)
     for var, meta in ALL_METRICS.items()
     if meta.get("geography", "").startswith("DSNY") and "filename" in meta
-}
-
-# ZCTA-level metrics (ZIP Code Tabulation Areas, not census tracts).
-HVI_METRIC_SPECS = {
-    var: _to_map_spec(meta, include_filename=True)
-    for var, meta in ALL_METRICS.items()
-    if meta.get("geography", "").startswith("ZCTA") and "filename" in meta
 }
 
 # senior_poverty_rate is registered as a demographic metric for other domains'
@@ -343,86 +333,44 @@ def create_section_map(metric):
     )
 
 
-# Load citywide ZCTA geometry and restrict it to the CB3-overlapping ZCTAs
-# already selected in environment.py (environment_heat_vulnerability.csv).
-zcta_geometry = gpd.read_file(ZCTA_GEOMETRY_PATH)
-zcta_geometry["zcta5"] = zcta_geometry["zcta5"].astype(str)
-zcta_geometry = zcta_geometry[["zcta5", "geometry"]].to_crs("EPSG:4326")
-
-heat_vulnerability_metrics = pd.read_csv(HEAT_VULNERABILITY_PATH, dtype={"zcta5": "string"})
-cb3_zcta_geometry = zcta_geometry[zcta_geometry["zcta5"].isin(heat_vulnerability_metrics["zcta5"])]
-assert len(cb3_zcta_geometry) == len(heat_vulnerability_metrics)
-
-# Attach each ZCTA's polygon centroid (HVI has no native building-level
-# coordinates), so the HVI score can be bubbled the same way as every other
-# metric map instead of shown as a ZCTA-level choropleth.
-zcta_points = add_polygon_centroids(
-    heat_vulnerability_metrics, cb3_zcta_geometry, "zcta5",
-    lat_col="zcta_centroid_latitude", lon_col="zcta_centroid_longitude",
-)
-
 # Living street trees are colored by health status rather than sized by
 # magnitude, so each color is a fixed marker fill rather than a legend tied
 # to bubble size.
 TREE_HEALTH_COLORS = {"Good": "#238b45", "Fair": "#fec44f", "Poor": "#d94701"}
+TREE_HEALTH_OUTPUT_PATH = MAP_OUTPUT_DIR / "street_tree_health.html"
 
 
-def add_zcta_outline_overlay(map_object, show=True):
-    """Add CB3-overlapping ZCTA (ZIP) boundaries as an unfilled checkbox overlay.
-
-    Bubbles sit at each ZCTA's centroid, so the outline gives viewers the
-    actual ZIP boundary the bubble is standing in for.
-    """
-    layer_data = cb3_zcta_geometry[["zcta5", "geometry"]]
-    folium.GeoJson(
-        data=layer_data.to_json(),
-        name="ZCTA (ZIP) boundaries",
-        overlay=True,
-        show=show,
-        style_function=lambda _: {
-            "fillOpacity": 0,
-            "color": "#08519c",
-            "weight": 2,
-        },
-        tooltip=folium.GeoJsonTooltip(
-            fields=["zcta5"],
-            aliases=["ZIP Code (ZCTA)"],
-            sticky=False,
-        ),
-    ).add_to(map_object)
-
-
-def create_heat_vulnerability_map():
-    def extra_layers(map_object):
-        add_ej_overlay(map_object, show=False)
-        add_zcta_outline_overlay(map_object, show=True)
-        add_categorical_point_layer(
-            map_object,
-            tree_points,
-            "health",
-            TREE_HEALTH_COLORS,
-            name="Street trees (health)",
-            tooltip_fields=["spc_common", "address"],
-            tooltip_aliases=["Species", "Address"],
-            show=True,
-            # The HVI bubble-size legend occupies the default bottom-right
-            # position (up to ~190px tall); offset the tree legend below it
-            # so the two don't overlap.
-            legend_bottom_offset=230,
+def create_tree_health_map():
+    # No numeric metric to bubble here (each tree is a single point, not a
+    # magnitude), so this is built directly from the generic layer helpers
+    # rather than build_metric_bubble_map.
+    map_object = make_base_map(tracts)
+    for index, demographic in enumerate(DEMOGRAPHIC_SPECS):
+        add_metric_layer(
+            map_object, tracts, demographic, DEMOGRAPHIC_SPECS[demographic],
+            show=index == 0, add_legend=False, overlay=False,
         )
-
-    spec = HVI_METRIC_SPECS["heat_vulnerability_index"]
-    return build_metric_bubble_map(
-        tracts, HVI_METRIC_SPECS, DEMOGRAPHIC_SPECS, "heat_vulnerability_index",
-        title="CB3 Environmental Conditions: Heat Vulnerability, EJ Areas & Street Trees",
-        output_path=MAP_OUTPUT_DIR / spec["filename"],
-        points=zcta_points,
-        lat_col="zcta_centroid_latitude",
-        lon_col="zcta_centroid_longitude",
-        tooltip_fields=["zcta5"],
-        tooltip_aliases=["ZIP Code (ZCTA)"],
-        extra_layers=extra_layers,
+    add_ej_overlay(map_object, show=False)
+    add_categorical_point_layer(
+        map_object,
+        tree_points,
+        "health",
+        TREE_HEALTH_COLORS,
+        name="Street trees (health)",
+        tooltip_fields=["spc_common", "address", "tract_label"],
+        tooltip_aliases=["Species", "Address", "Census tract"],
+        show=True,
     )
+    add_zero_value_legend(map_object, "#d9d9d9", "Demographic data not available")
+    add_map_title(
+        map_object,
+        "CB3 Environmental Conditions: Street Tree Health",
+        "Choropleth: use the layer control to pick a demographic fill. "
+        "Points: living street trees (2015 TreesCount census), colored by health status.",
+    )
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(TREE_HEALTH_OUTPUT_PATH)
+    return map_object
 ```
 
 ## Separate maps
@@ -458,14 +406,13 @@ sidewalks_map = create_section_map("avg_acceptable_sidewalks_pct")
 sidewalks_map
 ```
 
-### Heat vulnerability, EJ Areas & street trees
+### Street tree health
 
 ```{python}
-# Heat Vulnerability Index is reported by ZCTA, not census tract, so bubbles
-# sit at each ZCTA's centroid with the ZCTA boundary drawn as an outline
-# overlay. Living street trees are individual points colored by health status.
-heat_vulnerability_map = create_heat_vulnerability_map()
-heat_vulnerability_map
+# Living street trees have no magnitude to bubble by, so each tree is plotted
+# at its own coordinates as a fixed-size marker colored by health status.
+tree_health_map = create_tree_health_map()
+tree_health_map
 ```
 
 
@@ -475,7 +422,7 @@ heat_vulnerability_map
 expected_map_files = (
     [MAP_OUTPUT_DIR / spec["filename"] for spec in METRIC_SPECS.values()]
     + [MAP_OUTPUT_DIR / spec["filename"] for spec in SECTION_METRIC_SPECS.values()]
-    + [MAP_OUTPUT_DIR / spec["filename"] for spec in HVI_METRIC_SPECS.values()]
+    + [TREE_HEALTH_OUTPUT_PATH]
 )
 
 for map_file in expected_map_files:
