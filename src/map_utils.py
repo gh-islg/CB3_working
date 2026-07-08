@@ -410,6 +410,117 @@ def add_bubble_size_legend(map_object, label, unit, max_value, radius_fn, color,
     map_object.get_root().html.add_child(folium.Element(legend_html))
 
 
+def add_categorical_point_layer(
+    map_object,
+    points,
+    category_col,
+    category_colors,
+    name,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=None,
+    tooltip_aliases=None,
+    radius=3,
+    outline_color="#ffffff",
+    show=True,
+    overlay=True,
+    add_legend=True,
+    legend_bottom_offset=35,
+):
+    """Add fixed-size circle markers colored by a categorical column.
+
+    Unlike ``add_bubble_layer`` (which sizes markers by a numeric magnitude
+    and uses one fixed color), this draws same-size markers colored per
+    ``category_col`` value, for point data distinguished by category rather
+    than magnitude (e.g. tree health status, violation type). Rows whose
+    category isn't a key in ``category_colors`` are dropped.
+
+    Parameters
+    ----------
+    map_object : folium.Map
+    points : DataFrame
+        Must contain ``lat_col``, ``lon_col``, and ``category_col``.
+    category_col : str
+        Column whose values select the marker color.
+    category_colors : dict
+        Maps each category value to a hex color; also defines the legend
+        order (top to bottom) and which categories are plotted.
+    name : str
+        Layer-control name.
+    tooltip_fields, tooltip_aliases : list or None
+        Extra columns/aliases shown in the tooltip alongside ``category_col``.
+    radius : float
+        Fixed pixel radius for every marker.
+    outline_color : str
+        Marker stroke color, drawn as a halo around the fill so markers stay
+        legible over any choropleth underneath.
+    show : bool
+        Whether the layer is visible on load.
+    overlay : bool
+        True → checkbox (overlay); False → radio button (base layer).
+    add_legend : bool
+        Whether to attach a categorical swatch legend to the map.
+    legend_bottom_offset : int
+        Pixels from the bottom of the map to the legend box. Increase if
+        another legend already occupies the default position.
+    """
+    plot_points = points[points[category_col].isin(category_colors)].copy()
+
+    fields = [category_col] + (tooltip_fields or [])
+    aliases = [category_col.replace("_", " ").title()] + (tooltip_aliases or [])
+
+    layer = folium.FeatureGroup(name=name, show=show, control=overlay)
+    for _, row in plot_points.iterrows():
+        tooltip_lines = [f"{alias}: {row[field]}" for field, alias in zip(fields, aliases)]
+        folium.CircleMarker(
+            location=[row[lat_col], row[lon_col]],
+            radius=radius,
+            color=outline_color,
+            weight=1,
+            fill=True,
+            fill_color=category_colors[row[category_col]],
+            fill_opacity=0.85,
+            tooltip=folium.Tooltip("<br>".join(tooltip_lines)),
+        ).add_to(layer)
+    layer.add_to(map_object)
+
+    if add_legend:
+        add_categorical_legend(map_object, name, category_colors, bottom_offset=legend_bottom_offset)
+
+    return layer
+
+
+def add_categorical_legend(map_object, title, category_colors, bottom_offset=35):
+    """Add a fixed-position legend showing one swatch per category."""
+    rows_html = "".join(
+        f"""
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+          <span style="display:inline-block;width:14px;height:14px;background:{color};
+                       border:1px solid #777;border-radius:50%;"></span>
+          <span>{label}</span>
+        </div>
+        """
+        for label, color in category_colors.items()
+    )
+    legend_html = f"""
+    <div style="
+        position: fixed;
+        bottom: {bottom_offset}px;
+        right: 20px;
+        z-index: 9999;
+        background: rgba(255,255,255,0.94);
+        border: 1px solid #777;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font: 12px Arial, sans-serif;
+        color: #222;">
+      <div style="font-weight:700;margin-bottom:4px;">{title}</div>
+      {rows_html}
+    </div>
+    """
+    map_object.get_root().html.add_child(folium.Element(legend_html))
+
+
 # Fixed color cycle for grouped bubble maps, so each related-metric layer
 # stays a stable, distinguishable color regardless of how many layers are
 # grouped together.

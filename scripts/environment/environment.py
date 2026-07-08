@@ -1,6 +1,9 @@
 """Build the CB3 Environmental Conditions tract-level metrics table.
 It uses only local project data and writes:
-    data/clean/environment.csv
+    data/clean/environment_tract.csv
+    data/clean/environment_rodent_inspection_points.csv
+    data/clean/environment_heat_vulnerability.csv
+    data/clean/environment_tree_points.csv
 """
 #%%
 from pathlib import Path
@@ -18,8 +21,10 @@ import pandas as pd
 import geopandas as gpd
 
 from src.cb3_utils import (
+    add_polygon_centroids,
     assign_points_to_cb3_tract,
     load_cb3_tract_universe,
+    select_overlapping_geography,
 )
 
 # Define project paths and create the clean-data directory.
@@ -28,8 +33,11 @@ RAW_DIR = PROJECT_DIR / "data" / "raw" / "Environment"
 GEOGRAPHY_DIR = PROJECT_DIR / "data" / "raw" / "Geography"
 RELATIONSHIP_DIR = GEOGRAPHY_DIR / "GeographicRelationshipFiles"
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
-OUTPUT_PATH = CLEAN_DIR / "environment.csv"
+OUTPUT_PATH = CLEAN_DIR / "environment_tract.csv"
 LOG_PATH = CLEAN_DIR / "environment_log.txt"
+RODENT_INSPECTION_POINTS_PATH = CLEAN_DIR / "environment_rodent_inspection_points.csv"
+HEAT_VULNERABILITY_PATH = CLEAN_DIR / "environment_heat_vulnerability.csv"
+TREE_POINTS_PATH = CLEAN_DIR / "environment_tree_points.csv"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 #%%
 
@@ -46,6 +54,37 @@ def _assign(frame, lon_col, lat_col, source_tract_col=None):
     return assign_points_to_cb3_tract(
         frame, lon_col, lat_col, cb3_tract_geometry, CB3_TRACT_CODES, source_tract_col
     )
+
+
+def build_building_points(frame, bbl_col, address_col, lon_col, lat_col, value_cols):
+    """Aggregate point-event records (e.g. inspections) to one row per
+    building (BBL) with summed metric counts and native coordinates.
+
+    Records missing a BBL are dropped from the building-level export (they
+    still contribute to the tract-level counts computed separately), since
+    there is no reliable building key to group them on.
+    """
+    with_bbl = frame[
+        frame[bbl_col].notna()
+        & frame[lat_col].notna()
+        & frame[lon_col].notna()
+        & frame["GEOID"].isin(CB3_GEOIDS)
+    ].copy()
+    with_bbl[bbl_col] = with_bbl[bbl_col].astype("int64")
+    points = (
+        with_bbl.groupby(bbl_col, as_index=False)
+        .agg(
+            **{
+                "GEOID": ("GEOID", "first"),
+                "address": (address_col, "first"),
+                "longitude": (lon_col, "first"),
+                "latitude": (lat_col, "first"),
+                **{col: (col, "sum") for col in value_cols},
+            }
+        )
+        .rename(columns={bbl_col: "bbl"})
+    )
+    return points
 #%%
 
 
@@ -82,32 +121,7 @@ ej_area_metrics["ej_area_flag"] = (
     ej_area_metrics["GEOID2010"].isin(designated_2010_geoids).astype(int)
 )
 ej_area_metrics = ej_area_metrics[["GEOID", "ej_area_flag"]]
-
 #%%
-# Rodent activity (311 service requests)
-
-# File is pre-filtered to CB3 rodent complaints but lacks a Census Tract column,
-# so assign each record to a tract by spatially joining its coordinates.
-rodent_311 = pd.read_csv(
-    RAW_DIR / "311_Service_Requests_from_2020_to_Present_20260428.csv",
-    low_memory=False,
-)
-rodent_311 = rodent_311[
-    rodent_311["Borough"].eq("MANHATTAN")
-    & rodent_311["Community Board"].eq("03 MANHATTAN")
-    & rodent_311["Problem (formerly Complaint Type)"].eq("Rodent")
-].copy()
-rodent_311["GEOID"] = _assign(rodent_311, "Longitude", "Latitude")
-rodent_311_unallocated_count = int(rodent_311["GEOID"].isna().sum())
-rodent_311_mapped = rodent_311[rodent_311["GEOID"].isin(CB3_GEOIDS)].copy()
-
-rodent_311_metrics = (
-    rodent_311_mapped.assign(rodent_311_calls=1)
-    .groupby("GEOID", as_index=False)["rodent_311_calls"]
-    .sum()
-)
-#%%
-
 
 # Rodent inspections (DOHMH)
 
@@ -126,67 +140,82 @@ rodent_insp_active["GEOID"] = _assign(
 )
 rodent_insp_unallocated_count = int(rodent_insp_active["GEOID"].isna().sum())
 rodent_insp_mapped = rodent_insp_active[rodent_insp_active["GEOID"].isin(CB3_GEOIDS)].copy()
+rodent_insp_mapped["rodent_active_inspections"] = 1
 
 rodent_insp_metrics = (
-    rodent_insp_mapped.assign(rodent_active_inspections=1)
-    .groupby("GEOID", as_index=False)["rodent_active_inspections"]
+    rodent_insp_mapped.groupby("GEOID", as_index=False)["rodent_active_inspections"]
     .sum()
+)
+
+# Building-level export for point/bubble maps: one row per building with a
+# confirmed-activity inspection, keeping its own coordinates rather than
+# collapsing to the tract centroid.
+rodent_insp_points = build_building_points(
+    rodent_insp_mapped, "BBL", "LOCATION", "LONGITUDE", "LATITUDE",
+    ["rodent_active_inspections"],
+)
+rodent_insp_points.to_csv(RODENT_INSPECTION_POINTS_PATH, index=False)
+print(f"Wrote {len(rodent_insp_points)} rodent inspection building points to {RODENT_INSPECTION_POINTS_PATH}")
+#%%
+
+# Heat Vulnerability Index (DOHMH, reported by ZCTA)
+
+# HVI is reported by ZIP Code Tabulation Area (ZCTA), not census tract, so it
+# is kept as its own ZCTA-level table rather than merged into the 31-row
+# tract table. ZCTAs are selected by area overlap with the CB3 tract
+# boundary (not intersects/within), since intersects also matches ZCTAs that
+# only touch CB3 at a sliver (e.g. across the river), which would misstate
+# geographic relevance.
+zcta_geometry = gpd.read_file(GEOGRAPHY_DIR / "ZIP_Code_Tabulation_Areas_20260708.geojson")
+zcta_geometry["zcta5"] = zcta_geometry["zcta5"].astype(str)
+zcta_geometry = zcta_geometry[["zcta5", "geometry"]].to_crs("EPSG:4326")
+
+cb3_zctas = select_overlapping_geography(zcta_geometry, cb3_tract_geometry, min_overlap_pct=1.0)
+
+hvi = pd.read_csv(RAW_DIR / "Heat_Vulnerability_Index_Rankings_20260420.csv")
+hvi = hvi.rename(
+    columns={
+        "ZIP Code Tabulation Area (ZCTA) 2020": "zcta5",
+        "Heat Vulnerability Index (HVI)": "heat_vulnerability_index",
+    }
+)
+hvi["zcta5"] = hvi["zcta5"].astype(str)
+
+heat_vulnerability_metrics = cb3_zctas[["zcta5", "pct_of_cb3_covered"]].merge(
+    hvi, on="zcta5", how="left", validate="one_to_one"
+)
+heat_vulnerability_metrics = heat_vulnerability_metrics.sort_values("zcta5").reset_index(drop=True)
+heat_vulnerability_metrics.round({"pct_of_cb3_covered": 1}).to_csv(HEAT_VULNERABILITY_PATH, index=False)
+print(
+    f"Wrote {len(heat_vulnerability_metrics)} CB3-overlapping ZCTAs to {HEAT_VULNERABILITY_PATH}"
 )
 #%%
 
+# Street trees (NYC Parks 2015 TreesCount census)
 
-# Indoor environmental complaints (DOHMH)
-
-# Has both coordinates and a Census Tract field; coordinates are the primary
-# assignment method and the source tract is used only as a fallback.
-# Note: the staged file here is the 20260420 vintage; the Housing domain uses
-# the 20260428 vintage (15 additional records). Flag if vintages are reconciled.
-indoor = pd.read_csv(
-    RAW_DIR / "DOHMH_Indoor_Environmental_Complaints_20260420.csv",
+# File is citywide; filter to CB3 Manhattan (community board 103) and keep
+# only Alive trees, since Dead/Stump records have no health rating to color
+# by. Coordinates are complete for the CB3 subset, so no source-tract
+# fallback is needed for the spatial join.
+trees = pd.read_csv(
+    RAW_DIR / "2015_Street_Tree_Census_-_Tree_Data_20260630.csv",
     low_memory=False,
 )
-indoor = indoor[
-    indoor["Incident_Address_Borough"].str.upper().eq("MANHATTAN")
-    & indoor["Community Board"].eq(3)
-    & indoor["Deleted"].ne("Yes")
+trees_cb3 = trees[
+    trees["community board"].eq(103)
+    & trees["borough"].eq("Manhattan")
+    & trees["status"].eq("Alive")
 ].copy()
-indoor["GEOID"] = _assign(indoor, "Longitude", "Latitude", "Census Tract")
-indoor_unallocated_count = int(indoor["GEOID"].isna().sum())
-indoor_mapped = indoor[indoor["GEOID"].isin(CB3_GEOIDS)].copy()
+trees_cb3["GEOID"] = _assign(trees_cb3, "longitude", "latitude")
+tree_unallocated_count = int(trees_cb3["GEOID"].isna().sum())
+trees_cb3_mapped = trees_cb3[trees_cb3["GEOID"].isin(CB3_GEOIDS)].copy()
 
-indoor_metrics = (
-    indoor_mapped.assign(
-        indoor_environmental_complaints=1,
-        indoor_air_quality_complaints=indoor_mapped["Complaint_Type_311"]
-        .str.upper()
-        .eq("INDOOR AIR QUALITY")
-        .astype(int),
-        mold_complaints=indoor_mapped["Complaint_Type_311"]
-        .str.upper()
-        .eq("MOLD")
-        .astype(int),
-        asbestos_complaints=indoor_mapped["Complaint_Type_311"]
-        .str.upper()
-        .eq("ASBESTOS")
-        .astype(int),
-        indoor_sewage_complaints=indoor_mapped["Complaint_Type_311"]
-        .str.upper()
-        .eq("INDOOR SEWAGE")
-        .astype(int),
-    )
-    .groupby("GEOID", as_index=False)[
-        [
-            "indoor_environmental_complaints",
-            "indoor_air_quality_complaints",
-            "mold_complaints",
-            "asbestos_complaints",
-            "indoor_sewage_complaints",
-        ]
-    ]
-    .sum()
-)
+tree_points = trees_cb3_mapped[
+    ["tree_id", "address", "GEOID", "latitude", "longitude", "health", "spc_common"]
+].copy()
+tree_points.to_csv(TREE_POINTS_PATH, index=False)
+print(f"Wrote {len(tree_points)} alive street tree points to {TREE_POINTS_PATH}")
 #%%
-
 
 # Sanitation cleanliness (DSNY scorecard — section level)
 
@@ -238,9 +267,7 @@ print(
 # zero for tracts with no matching records.
 metric_frames = [
     ej_area_metrics,
-    rodent_311_metrics,
-    rodent_insp_metrics,
-    indoor_metrics,
+    rodent_insp_metrics
 ]
 
 clean = tracts[
@@ -257,21 +284,8 @@ clean = tracts[
 for metric_frame in metric_frames:
     clean = clean.merge(metric_frame, on="GEOID", how="left", validate="one_to_one")
 
-count_columns = [
-    "rodent_311_calls",
-    "rodent_active_inspections",
-    "indoor_environmental_complaints",
-    "indoor_air_quality_complaints",
-    "mold_complaints",
-    "asbestos_complaints",
-    "indoor_sewage_complaints",
-]
+count_columns = ["rodent_active_inspections"]
 clean[count_columns] = clean[count_columns].fillna(0)
-
-# Compute East Village share of rodent calls for the flag note below.
-ev_calls = int(clean.loc[clean["nta_name"].eq("East Village"), "rodent_311_calls"].sum())
-total_calls = int(clean["rodent_311_calls"].sum())
-ev_share = f"{ev_calls / total_calls:.1%}" if total_calls > 0 else "n/a"
 
 # Write geography and data-availability notes to a sidecar log instead of
 # repeating identical text across all 31 rows.
@@ -287,22 +301,17 @@ log_lines = [
     "EJ Areas:              2010 GEOID10 crosswalked to 2020 tracts via "
     "nyc_2010to2020_split_census_tract_pop_proportion.xlsx; each 2020 tract "
     "uses its primary (largest population-proportion) 2010 source tract.",
-    f"Rodent 311 calls:      {rodent_311_unallocated_count} CB3-labelled records not allocated to a tract",
     f"Rodent inspections:    {rodent_insp_unallocated_count} active-result records not allocated to a tract",
-    f"Indoor env complaints: {indoor_unallocated_count} CB3-labelled records not allocated to a tract",
-    "",
-    "=== Flag for Review ===",
-    f"Rodent 311 NTA share:  Tract-level aggregation gives East Village {ev_share} of "
-    "mapped CB3 rodent calls, vs. the concept doc's cited ~48%. Re-check before "
-    "using the NTA-level disparity narrative with this build.",
+    f"Street trees:          {tree_unallocated_count} Alive CB3-board records not allocated to a tract",
+    f"Heat Vulnerability Index: {len(heat_vulnerability_metrics)} ZCTAs selected by >=1% area overlap "
+    "with the CB3 tract boundary (see pct_of_cb3_covered in environment_heat_vulnerability.csv); "
+    "reported by ZCTA, not census tract, so kept as its own table.",
     "",
     "=== Data Availability ===",
     f"Sanitation cleanliness: Reported at cleaning section level (MN031-MN034). "
     f"Averaged over {scorecard_n_months} non-null months "
     f"({scorecard_cutoff.strftime('%Y-%m')} to {latest_scorecard_date.strftime('%Y-%m')}). "
-    f"Written to environment_sections.csv; not included in tract-level environment.csv.",
-    "Heat Vulnerability Index: reported by ZIP/ZCTA, not census tract. Deferred "
-    "per request; not yet included.",
+    f"Written to environment_sections.csv; not included in tract-level {OUTPUT_PATH.name}.",
 ]
 LOG_PATH.write_text("\n".join(log_lines), encoding="utf-8")
 print(f"Wrote build log to {LOG_PATH}")
@@ -312,6 +321,14 @@ clean = clean.sort_values("GEOID").reset_index(drop=True)
 assert len(clean) == 31
 assert clean["GEOID"].is_unique
 assert clean["GEOID"].str.fullmatch(r"\d{11}").all()
+
+# Attach each tract's polygon centroid so tract-level metrics (e.g. EJ Area
+# status) can still be placed as a single point on point/bubble map layers,
+# in the absence of building-level coordinates.
+clean = add_polygon_centroids(
+    clean, cb3_tract_geometry, "GEOID",
+    lat_col="tract_centroid_latitude", lon_col="tract_centroid_longitude",
+)
 
 clean.to_csv(OUTPUT_PATH, index=False)
 print(f"Wrote {len(clean)} rows and {len(clean.columns)} columns to {OUTPUT_PATH}")
@@ -324,9 +341,9 @@ validation = pd.Series(
         "tract_rows": len(clean),
         "unique_geoids": clean["GEOID"].nunique(),
         "ej_area_tracts": clean["ej_area_flag"].sum(),
-        "mapped_rodent_311_calls": clean["rodent_311_calls"].sum(),
         "mapped_rodent_active_inspections": clean["rodent_active_inspections"].sum(),
-        "mapped_indoor_env_complaints": clean["indoor_environmental_complaints"].sum(),
+        "cb3_zctas": len(heat_vulnerability_metrics),
+        "mapped_alive_trees": len(tree_points),
     }
 )
 print(validation.to_frame("value").to_string())
