@@ -207,40 +207,6 @@ def add_polygon_centroids(
     )
 
 
-def select_overlapping_geography(candidate_polygons, cb3_tract_geometry, min_overlap_pct=1.0, projected_crs="EPSG:2263"):
-    """Select polygons from a larger citywide geography (e.g. ZCTAs) that
-    meaningfully overlap the CB3 tract boundary.
-
-    Uses area-of-overlap rather than a simple intersects/within test, since
-    intersects also matches polygons that only touch the CB3 boundary at a
-    sliver (e.g. across a river or at a single boundary vertex), which would
-    misrepresent geographic relevance. Returns ``candidate_polygons`` filtered
-    to rows whose overlap with the CB3 boundary is at least ``min_overlap_pct``
-    of the CB3 boundary's total area, with a ``pct_of_cb3_covered`` column
-    added for transparency/logging.
-
-    Parameters
-    ----------
-    candidate_polygons : GeoDataFrame
-        Citywide polygons to filter (e.g. all NYC ZCTAs).
-    cb3_tract_geometry : GeoDataFrame
-        The 31 CB3 tract polygons, as returned by ``load_cb3_tract_universe``.
-    min_overlap_pct : float
-        Minimum overlap with the CB3 boundary, as a percent of the CB3
-        boundary's total area, for a candidate polygon to be kept.
-    projected_crs : str
-        CRS used for area calculation; should be equal-area/equidistant for
-        the region, not a geographic (lat/lon) CRS.
-    """
-    cb3_boundary = cb3_tract_geometry.to_crs(projected_crs).geometry.union_all()
-    projected = candidate_polygons.to_crs(projected_crs)
-    overlap_area = projected.geometry.intersection(cb3_boundary).area
-
-    result = candidate_polygons.copy()
-    result["pct_of_cb3_covered"] = (overlap_area / cb3_boundary.area * 100).values
-    return result[result["pct_of_cb3_covered"] >= min_overlap_pct].copy()
-
-
 def load_cb3_acs(filename, raw_dir, CB3_TRACT_CODES):
     """Load and filter an ACS table to the 31-tract CB3 universe."""
     frame = clean_census_values(pd.read_csv(raw_dir / filename, low_memory=False))
