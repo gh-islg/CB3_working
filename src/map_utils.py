@@ -420,20 +420,22 @@ def add_categorical_point_layer(
     lon_col="longitude",
     tooltip_fields=None,
     tooltip_aliases=None,
-    radius=3,
+    size=15,
     outline_color="#ffffff",
     show=True,
     overlay=True,
     add_legend=True,
     legend_bottom_offset=35,
 ):
-    """Add fixed-size circle markers colored by a categorical column.
+    """Add fixed-size diamond markers colored by a categorical column.
 
-    Unlike ``add_bubble_layer`` (which sizes markers by a numeric magnitude
-    and uses one fixed color), this draws same-size markers colored per
-    ``category_col`` value, for point data distinguished by category rather
-    than magnitude (e.g. tree health status, violation type). Rows whose
-    category isn't a key in ``category_colors`` are dropped.
+    Unlike ``add_bubble_layer`` (which sizes round markers by a numeric
+    magnitude and uses one fixed color), this draws same-size diamond
+    markers colored per ``category_col`` value, for point data distinguished
+    by category rather than magnitude (e.g. tree health status, violation
+    type). The diamond shape keeps "round = sized by magnitude" and
+    "diamond = categorical" as separate visual languages on the same map.
+    Rows whose category isn't a key in ``category_colors`` are dropped.
 
     Parameters
     ----------
@@ -449,8 +451,8 @@ def add_categorical_point_layer(
         Layer-control name.
     tooltip_fields, tooltip_aliases : list or None
         Extra columns/aliases shown in the tooltip alongside ``category_col``.
-    radius : float
-        Fixed pixel radius for every marker.
+    size : float
+        Pixel width/height of each diamond marker (measured corner to corner).
     outline_color : str
         Marker stroke color, drawn as a halo around the fill so markers stay
         legible over any choropleth underneath.
@@ -469,17 +471,31 @@ def add_categorical_point_layer(
     fields = [category_col] + (tooltip_fields or [])
     aliases = [category_col.replace("_", " ").title()] + (tooltip_aliases or [])
 
+    # A diamond is a square rotated 45deg; side length is set so the
+    # corner-to-corner width/height equals `size`.
+    side = round(size / 1.41421356, 1)
+
     layer = folium.FeatureGroup(name=name, show=show, control=overlay)
     for _, row in plot_points.iterrows():
         tooltip_lines = [f"{alias}: {row[field]}" for field, alias in zip(fields, aliases)]
-        folium.CircleMarker(
+        icon = folium.DivIcon(
+            html=f"""
+            <div style="
+                width: {side}px;
+                height: {side}px;
+                background: {category_colors[row[category_col]]};
+                border: 1.5px solid {outline_color};
+                box-shadow: 0 0 1px 1px rgba(0,0,0,0.35);
+                transform: rotate(45deg);
+                box-sizing: border-box;
+            "></div>
+            """,
+            icon_size=(side, side),
+            icon_anchor=(side / 2, side / 2),
+        )
+        folium.Marker(
             location=[row[lat_col], row[lon_col]],
-            radius=radius,
-            color=outline_color,
-            weight=1,
-            fill=True,
-            fill_color=category_colors[row[category_col]],
-            fill_opacity=0.85,
+            icon=icon,
             tooltip=folium.Tooltip("<br>".join(tooltip_lines)),
         ).add_to(layer)
     layer.add_to(map_object)
@@ -490,13 +506,23 @@ def add_categorical_point_layer(
     return layer
 
 
-def add_categorical_legend(map_object, title, category_colors, bottom_offset=35):
-    """Add a fixed-position legend showing one swatch per category."""
+def add_categorical_legend(map_object, title, category_colors, bottom_offset=35, shape="diamond"):
+    """Add a fixed-position legend showing one swatch per category.
+
+    Parameters
+    ----------
+    shape : str
+        ``"diamond"`` (default) matches the diamond point markers drawn by
+        ``add_categorical_point_layer``. Use ``"square"`` for categorical
+        polygon/fill layers (e.g. an evacuation-zone choropleth), where a
+        diamond swatch would misleadingly imply point markers.
+    """
+    swatch_transform = "transform:rotate(45deg);" if shape == "diamond" else ""
     rows_html = "".join(
         f"""
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
-          <span style="display:inline-block;width:14px;height:14px;background:{color};
-                       border:1px solid #777;border-radius:50%;"></span>
+          <span style="display:inline-block;width:10px;height:10px;background:{color};
+                       border:1px solid #777;{swatch_transform}"></span>
           <span>{label}</span>
         </div>
         """
