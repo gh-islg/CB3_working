@@ -428,6 +428,7 @@ def build_metric_bubble_map(
     lon_col="tract_centroid_longitude",
     tooltip_fields=None,
     tooltip_aliases=None,
+    extra_layers=None,
 ):
     """Build and save a map with selectable demographic choropleth backdrops
     and one bubble layer for ``metric``, sized by magnitude.
@@ -460,6 +461,14 @@ def build_metric_bubble_map(
         Passed to ``add_bubble_layer``; defaults to ``tracts`` (tract centroids).
     tooltip_fields, tooltip_aliases : list or None
         Extra bubble tooltip fields; default to tract label/NTA.
+    extra_layers : callable or None
+        Optional ``f(map_object)`` invoked after the bubble layer but before
+        ``LayerControl`` is added, for domain-specific overlays (e.g. an EJ
+        Area overlay) that need to appear in the same control. Layers added
+        after ``LayerControl`` render in a later script tag than the one that
+        references them, which throws a JS ReferenceError and silently
+        breaks the whole control — see Folium's own LayerControl docstring
+        ("should be added last to the map").
     """
     tooltip_fields = tooltip_fields if tooltip_fields is not None else ["tract_label", "nta_name"]
     tooltip_aliases = tooltip_aliases if tooltip_aliases is not None else ["Census tract", "NTA"]
@@ -486,6 +495,8 @@ def build_metric_bubble_map(
         show=True,
         overlay=True,
     )
+    if extra_layers is not None:
+        extra_layers(map_object)
     add_map_title(
         map_object,
         title,
@@ -511,6 +522,7 @@ def build_grouped_bubble_map(
     lon_col="tract_centroid_longitude",
     tooltip_fields=None,
     tooltip_aliases=None,
+    extra_layers=None,
 ):
     """Like ``build_metric_bubble_map``, but adds one bubble layer per metric
     in ``metrics`` so directly related metrics (e.g. two expiration windows,
@@ -554,6 +566,8 @@ def build_grouped_bubble_map(
             legend_bottom_offset=35 + index * 230,
         )
 
+    if extra_layers is not None:
+        extra_layers(map_object)
     add_map_title(map_object, title, subtitle)
     add_zero_value_legend(map_object, "#d9d9d9", "Demographic data not available")
     folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
