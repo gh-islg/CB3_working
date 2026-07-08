@@ -165,16 +165,21 @@ new_construction_points = new_construction_points.merge(
 ```{python}
 # Build METRIC_SPECS and DEMOGRAPHIC_SPECS from metric_metadata.yml.
 # To change a palette, label, or unit, edit the YAML — not this notebook.
+#
+# `palette` (and positive_values_only/zero_color/zero_label) are only
+# consumed by add_metric_layer() for choropleths — i.e. only demographic
+# entries actually need them now. Domain metrics render as bubbles via
+# build_metric_bubble_map()/build_grouped_bubble_map(), which don't read
+# these fields, so they're optional here rather than required.
 def _to_map_spec(meta, include_filename=False):
     spec = {
         "dimension": meta["short_label"],
         "label":     meta["label"],
         "unit":      meta["unit"],
-        "palette":   meta["palette"],
     }
     if include_filename:
         spec["filename"] = meta["filename"]
-    for key in ("positive_values_only", "zero_color", "zero_label"):
+    for key in ("palette", "positive_values_only", "zero_color", "zero_label"):
         if key in meta:
             spec[key] = meta[key]
     return spec
