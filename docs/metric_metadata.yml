@@ -55,6 +55,23 @@ subsidized_units_expiring_2025_2030:
   display_format: count
   filename: subsidized_housing_at_risk.html
 
+subsidized_units_expiring_2031_2040:
+  domain: housing_and_affordability
+  short_label: Subsidized properties at risk (2031-2040)
+  label: "Subsidized units with earliest recorded expiration in 2031–2040"
+  description: >
+    Number of residential units on subsidized properties whose earliest recorded
+    subsidy end date falls between 2031 and 2040.
+  unit: " units"
+  palette: ["#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"]
+  source: Furman Center Subsidized Housing Database
+  year: 2025
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+  filename: subsidized_housing_at_risk_2031_2040.html
+
 new_affordable_units_since_2018:
   domain: housing_and_affordability
   short_label: New affordable housing
@@ -91,6 +108,40 @@ hpd_open_class_bc:
   map_classification: quintile
   display_format: count
   filename: housing_quality.html
+
+hpd_open_class_b:
+  domain: housing_and_affordability
+  short_label: Housing quality (Class B)
+  label: Open hazardous HPD Class B violations
+  description: >
+    Number of open HPD housing maintenance code violations rated Class B
+    (hazardous).
+  unit: " violations"
+  palette: ["#feedde", "#fdbe85", "#fd8d3c", "#e6550d", "#a63603"]
+  source: NYC HPD Housing Maintenance Code Violations
+  year: 2026
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+  filename: housing_quality_class_b.html
+
+hpd_open_class_c:
+  domain: housing_and_affordability
+  short_label: Housing quality (Class C)
+  label: Open immediately hazardous HPD Class C violations
+  description: >
+    Number of open HPD housing maintenance code violations rated Class C
+    (immediately hazardous).
+  unit: " violations"
+  palette: ["#fee5d9", "#fcae91", "#fb6a4a", "#de2d26", "#a50f15"]
+  source: NYC HPD Housing Maintenance Code Violations
+  year: 2026
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+  filename: housing_quality_class_c.html
 
 # --- Environmental Conditions ---
 
@@ -292,6 +343,34 @@ median_household_income:
   map_classification: quintile
   display_format: dollar
 
+age_0_to_19_share:
+  domain: demographics
+  short_label: "Age 0-19"
+  label: Residents age 0 to 19
+  description: Share of the total population aged 0 to 19.
+  unit: "%"
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: ACS 5-year estimates, table B01001
+  year: 2023
+  geography: Census tract
+  higher_is: neutral
+  map_classification: quintile
+  display_format: percent
+
+age_20_to_64_share:
+  domain: demographics
+  short_label: "Age 20-64"
+  label: Residents age 20 to 64
+  description: Share of the total population aged 20 to 64.
+  unit: "%"
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: ACS 5-year estimates, table B01001
+  year: 2023
+  geography: Census tract
+  higher_is: neutral
+  map_classification: quintile
+  display_format: percent
+
 age_65_plus_share:
   domain: demographics
   short_label: "Age 65+"
@@ -312,7 +391,7 @@ white_non_hispanic_share:
   label: White non-Hispanic residents
   description: Share of the total population identifying as White alone, not Hispanic or Latino.
   unit: "%"
-  palette: ["#f7f7f7", "#d9d9d9", "#bdbdbd", "#636363", "#252525"]
+  palette: ["#f7f4f9", "#d4b9da", "#df65b0", "#ce1256", "#67001f"]
   source: ACS 5-year estimates, table B03002
   year: 2023
   geography: Census tract
@@ -326,7 +405,7 @@ black_non_hispanic_share:
   label: Black non-Hispanic residents
   description: Share of the total population identifying as Black or African American alone, not Hispanic or Latino.
   unit: "%"
-  palette: ["#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"]
+  palette: ["#f7f4f9", "#d4b9da", "#df65b0", "#ce1256", "#67001f"]
   source: ACS 5-year estimates, table B03002
   year: 2023
   geography: Census tract
@@ -340,7 +419,7 @@ asian_non_hispanic_share:
   label: Asian non-Hispanic residents
   description: Share of the total population identifying as Asian alone, not Hispanic or Latino.
   unit: "%"
-  palette: ["#f7fcfd", "#ccece6", "#66c2a4", "#238b45", "#00441b"]
+  palette: ["#f7f4f9", "#d4b9da", "#df65b0", "#ce1256", "#67001f"]
   source: ACS 5-year estimates, table B03002
   year: 2023
   geography: Census tract
