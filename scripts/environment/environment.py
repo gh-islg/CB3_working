@@ -131,7 +131,20 @@ rodent_insp = pd.read_csv(
     RAW_DIR / "Rodent_Inspection_20260428.csv",
     low_memory=False,
 )
+rodent_insp["INSPECTION_DATE"] = pd.to_datetime(
+    rodent_insp["INSPECTION_DATE"], format="%m/%d/%Y %I:%M:%S %p"
+)
 rodent_insp_active = rodent_insp[rodent_insp["RESULT"].isin(ACTIVE_RODENT_RESULTS)].copy()
+
+# Restrict to the latest 5 years of data (relative to the most recent
+# inspection in the file) instead of the full 2002-2026 history, so the
+# metric reflects recent conditions rather than two decades of accumulation.
+rodent_insp_latest_date = rodent_insp_active["INSPECTION_DATE"].max()
+rodent_insp_cutoff_date = rodent_insp_latest_date - pd.DateOffset(years=5)
+rodent_insp_active = rodent_insp_active[
+    rodent_insp_active["INSPECTION_DATE"] >= rodent_insp_cutoff_date
+].copy()
+
 rodent_insp_active["GEOID"] = _assign(
     rodent_insp_active, "LONGITUDE", "LATITUDE", "CENSUS TRACT"
 )
@@ -265,7 +278,9 @@ log_lines = [
     "EJ Areas:              2010 GEOID10 crosswalked to 2020 tracts via "
     "nyc_2010to2020_split_census_tract_pop_proportion.xlsx; each 2020 tract "
     "uses its primary (largest population-proportion) 2010 source tract.",
-    f"Rodent inspections:    {rodent_insp_unallocated_count} active-result records not allocated to a tract",
+    f"Rodent inspections:    {rodent_insp_unallocated_count} active-result records not allocated to a tract; "
+    f"restricted to latest 5 years ({rodent_insp_cutoff_date.strftime('%Y-%m-%d')} to "
+    f"{rodent_insp_latest_date.strftime('%Y-%m-%d')})",
     f"Street trees:          {tree_unallocated_count} Alive CB3-board records not allocated to a tract",
     "",
     "=== Data Availability ===",

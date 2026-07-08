@@ -166,18 +166,21 @@ ej_area_flag:
 rodent_active_inspections:
   domain: environment
   short_label: Rodent inspections
-  label: DOHMH rodent inspections with confirmed rat activity (2022–2025)
+  label: DOHMH rodent inspections with confirmed rat activity (latest 5 years, 2021–2026)
   description: >
     Count of DOHMH rodent inspections where the result was "Rat Activity" or
     "Failed for Rat Activity and Other Reason", indicating confirmed rat
     presence. Covers all inspection types (initial, compliance, treatments)
-    filed in CB3 between 2022 and 2025. Preferred over 311 call volume as a
-    measure of actual infestation burden because it reflects DOHMH-confirmed
-    evidence rather than resident reporting behavior.
+    filed in CB3, restricted to the latest 5 years of available data
+    (relative to the most recent inspection in the source file) rather than
+    the full 2002-2026 history, so the metric reflects recent conditions.
+    Preferred over 311 call volume as a measure of actual infestation burden
+    because it reflects DOHMH-confirmed evidence rather than resident
+    reporting behavior.
   unit: " inspections"
   palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
   source: DOHMH Rodent Inspection (NYC OpenData)
-  year: 2025
+  year: 2026
   geography: Census tract (spatially joined from point coordinates; CENSUS TRACT field as fallback)
   higher_is: worse
   map_classification: quintile
