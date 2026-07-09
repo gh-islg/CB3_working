@@ -15,7 +15,7 @@ __pycache__/
 .quarto/
 
 # Local generated outputs
-#maps/
+maps/
 data/clean/
 
 # OS/editor noise
