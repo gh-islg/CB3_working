@@ -323,6 +323,7 @@ def add_bubble_layer(
     outline_color="#ffffff",
     min_radius=5,
     max_radius=22,
+    scale_from_min=False,
     show=True,
     overlay=True,
     add_legend=True,
@@ -361,6 +362,15 @@ def add_bubble_layer(
         visible regardless of the color scheme of an underlying choropleth.
     min_radius, max_radius : float
         Pixel radius bounds for the smallest and largest non-zero values.
+    scale_from_min : bool
+        By default, radius scales as sqrt(value / max_value) — suited to
+        counts that meaningfully range down to zero (rodent inspections,
+        violations), where a value near zero should look near-invisible.
+        Set True for metrics that vary only modestly and never approach zero
+        (e.g. a concentration like PM2.5, ranging ~6.5-10.6 ug/m3): radius
+        instead scales as sqrt((value - min_value) / (max_value - min_value)),
+        so the least and most extreme observed values stretch across the
+        full min_radius-max_radius range instead of bunching near max_radius.
     show : bool
         Whether the layer is visible on load.
     overlay : bool
@@ -376,8 +386,14 @@ def add_bubble_layer(
     plot_points = points[points[value_col] > 0].copy()
 
     max_value = plot_points[value_col].max()
+    min_value = plot_points[value_col].min() if scale_from_min else 0
+    value_range = max_value - min_value
 
     def radius_for(value):
+        if scale_from_min:
+            if value_range <= 0:
+                return max_radius
+            return min_radius + (max_radius - min_radius) * ((value - min_value) / value_range) ** 0.5
         if max_value <= 0:
             return min_radius
         return min_radius + (max_radius - min_radius) * (value / max_value) ** 0.5
@@ -405,15 +421,27 @@ def add_bubble_layer(
 
     if add_legend and max_value > 0:
         add_bubble_size_legend(
-            map_object, label, unit, max_value, radius_for, color, bottom_offset=legend_bottom_offset
+            map_object, label, unit, max_value, radius_for, color,
+            bottom_offset=legend_bottom_offset,
+            min_value=min_value if scale_from_min else None,
         )
 
     return layer
 
 
-def add_bubble_size_legend(map_object, label, unit, max_value, radius_fn, color, bottom_offset=35):
-    """Add a fixed-position legend showing three reference bubble sizes."""
-    reference_values = sorted(set(round(v) for v in (max_value, max_value / 2, max_value / 8) if v > 0))
+def add_bubble_size_legend(map_object, label, unit, max_value, radius_fn, color, bottom_offset=35, min_value=None):
+    """Add a fixed-position legend showing three reference bubble sizes.
+
+    By default shows fractions of the maximum (max, max/2, max/8), suited to
+    counts that range down toward zero. Pass ``min_value`` (the layer's
+    ``scale_from_min=True`` case) to show the observed min/midpoint/max
+    instead — fractions of max wouldn't correspond to the actual radius
+    scale when bubbles are sized relative to the observed minimum.
+    """
+    if min_value is not None:
+        reference_values = sorted({round(v) for v in (min_value, (min_value + max_value) / 2, max_value)})
+    else:
+        reference_values = sorted(set(round(v) for v in (max_value, max_value / 2, max_value / 8) if v > 0))
     svg_size = 2 * radius_fn(max(reference_values))
     rows_html = "".join(
         f"""
