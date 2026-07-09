@@ -393,7 +393,14 @@ def add_bubble_layer(
         if scale_from_min:
             if value_range <= 0:
                 return max_radius
-            return min_radius + (max_radius - min_radius) * ((value - min_value) / value_range) ** 0.5
+            # Clamp to 0 before the sqrt: the legend passes rounded reference
+            # values (see add_bubble_size_legend) that can fall slightly below
+            # the true observed min, which would otherwise make (value -
+            # min_value) negative — and a negative number raised to the 0.5
+            # power in Python silently returns a complex number rather than
+            # raising, which breaks SVG rendering for that legend row.
+            ratio = max(0.0, (value - min_value) / value_range)
+            return min_radius + (max_radius - min_radius) * ratio ** 0.5
         if max_value <= 0:
             return min_radius
         return min_radius + (max_radius - min_radius) * (value / max_value) ** 0.5
