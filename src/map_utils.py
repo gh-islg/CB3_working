@@ -233,6 +233,7 @@ def add_tract_outline_layer(
     weight=1,
     show=True,
     control=False,
+    overlay=True,
 ):
     """Add a plain, unfilled tract-boundary layer for context under point/bubble layers.
 
@@ -250,6 +251,10 @@ def add_tract_outline_layer(
         Whether this layer appears as a toggle in the layer control. Defaults
         to False since it is meant as a fixed reference layer, not a dataset
         the viewer selects.
+    overlay : bool
+        True → checkbox (overlay); False → radio button (base layer), for
+        grouping this as a mutually-exclusive option alongside demographic
+        choropleth layers (see ``add_demographic_backdrop_layers``).
     """
     layer_data = tracts[["tract_label", "nta_name", "geometry"]]
     layer = folium.GeoJson(
@@ -257,6 +262,7 @@ def add_tract_outline_layer(
         name=name,
         show=show,
         control=control,
+        overlay=overlay,
         style_function=lambda feature: {
             "fillOpacity": 0,
             "color": color,
@@ -270,6 +276,36 @@ def add_tract_outline_layer(
     )
     layer.add_to(map_object)
     return layer
+
+
+def add_demographic_backdrop_layers(
+    map_object, tracts, demographic_specs, none_option_label="No demographic background"
+):
+    """Add each demographic metric as a selectable (radio-button) choropleth
+    base layer, plus a plain tract-outline option with no fill so viewers can
+    turn off the demographic backdrop entirely. The first demographic layer
+    is shown by default; the outline option is available but not shown.
+
+    Parameters
+    ----------
+    map_object : folium.Map
+    tracts : GeoDataFrame
+        Must contain every column referenced by ``demographic_specs``, plus
+        ``tract_label``, ``nta_name``, and ``geometry``.
+    demographic_specs : dict
+        Keyed by column name; drawn as selectable (radio-button) choropleth
+        base layers, one shown at a time.
+    none_option_label : str
+        Layer-control label for the no-fill tract-outline option.
+    """
+    for index, demographic in enumerate(demographic_specs):
+        add_metric_layer(
+            map_object, tracts, demographic, demographic_specs[demographic],
+            show=index == 0, add_legend=False, overlay=False,
+        )
+    add_tract_outline_layer(
+        map_object, tracts, name=none_option_label, show=False, control=True, overlay=False,
+    )
 
 
 def add_bubble_layer(
@@ -420,20 +456,22 @@ def add_categorical_point_layer(
     lon_col="longitude",
     tooltip_fields=None,
     tooltip_aliases=None,
-    radius=3,
+    size=15,
     outline_color="#ffffff",
     show=True,
     overlay=True,
     add_legend=True,
     legend_bottom_offset=35,
 ):
-    """Add fixed-size circle markers colored by a categorical column.
+    """Add fixed-size diamond markers colored by a categorical column.
 
-    Unlike ``add_bubble_layer`` (which sizes markers by a numeric magnitude
-    and uses one fixed color), this draws same-size markers colored per
-    ``category_col`` value, for point data distinguished by category rather
-    than magnitude (e.g. tree health status, violation type). Rows whose
-    category isn't a key in ``category_colors`` are dropped.
+    Unlike ``add_bubble_layer`` (which sizes round markers by a numeric
+    magnitude and uses one fixed color), this draws same-size diamond
+    markers colored per ``category_col`` value, for point data distinguished
+    by category rather than magnitude (e.g. tree health status, violation
+    type). The diamond shape keeps "round = sized by magnitude" and
+    "diamond = categorical" as separate visual languages on the same map.
+    Rows whose category isn't a key in ``category_colors`` are dropped.
 
     Parameters
     ----------
@@ -449,8 +487,8 @@ def add_categorical_point_layer(
         Layer-control name.
     tooltip_fields, tooltip_aliases : list or None
         Extra columns/aliases shown in the tooltip alongside ``category_col``.
-    radius : float
-        Fixed pixel radius for every marker.
+    size : float
+        Pixel width/height of each diamond marker (measured corner to corner).
     outline_color : str
         Marker stroke color, drawn as a halo around the fill so markers stay
         legible over any choropleth underneath.
@@ -469,17 +507,31 @@ def add_categorical_point_layer(
     fields = [category_col] + (tooltip_fields or [])
     aliases = [category_col.replace("_", " ").title()] + (tooltip_aliases or [])
 
+    # A diamond is a square rotated 45deg; side length is set so the
+    # corner-to-corner width/height equals `size`.
+    side = round(size / 1.41421356, 1)
+
     layer = folium.FeatureGroup(name=name, show=show, control=overlay)
     for _, row in plot_points.iterrows():
         tooltip_lines = [f"{alias}: {row[field]}" for field, alias in zip(fields, aliases)]
-        folium.CircleMarker(
+        icon = folium.DivIcon(
+            html=f"""
+            <div style="
+                width: {side}px;
+                height: {side}px;
+                background: {category_colors[row[category_col]]};
+                border: 1.5px solid {outline_color};
+                box-shadow: 0 0 1px 1px rgba(0,0,0,0.35);
+                transform: rotate(45deg);
+                box-sizing: border-box;
+            "></div>
+            """,
+            icon_size=(side, side),
+            icon_anchor=(side / 2, side / 2),
+        )
+        folium.Marker(
             location=[row[lat_col], row[lon_col]],
-            radius=radius,
-            color=outline_color,
-            weight=1,
-            fill=True,
-            fill_color=category_colors[row[category_col]],
-            fill_opacity=0.85,
+            icon=icon,
             tooltip=folium.Tooltip("<br>".join(tooltip_lines)),
         ).add_to(layer)
     layer.add_to(map_object)
@@ -490,13 +542,23 @@ def add_categorical_point_layer(
     return layer
 
 
-def add_categorical_legend(map_object, title, category_colors, bottom_offset=35):
-    """Add a fixed-position legend showing one swatch per category."""
+def add_categorical_legend(map_object, title, category_colors, bottom_offset=35, shape="diamond"):
+    """Add a fixed-position legend showing one swatch per category.
+
+    Parameters
+    ----------
+    shape : str
+        ``"diamond"`` (default) matches the diamond point markers drawn by
+        ``add_categorical_point_layer``. Use ``"square"`` for categorical
+        polygon/fill layers (e.g. an evacuation-zone choropleth), where a
+        diamond swatch would misleadingly imply point markers.
+    """
+    swatch_transform = "transform:rotate(45deg);" if shape == "diamond" else ""
     rows_html = "".join(
         f"""
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
-          <span style="display:inline-block;width:14px;height:14px;background:{color};
-                       border:1px solid #777;border-radius:50%;"></span>
+          <span style="display:inline-block;width:10px;height:10px;background:{color};
+                       border:1px solid #777;{swatch_transform}"></span>
           <span>{label}</span>
         </div>
         """
@@ -540,6 +602,8 @@ def build_metric_bubble_map(
     tooltip_fields=None,
     tooltip_aliases=None,
     extra_layers=None,
+    color="#1a1a1a",
+    subtitle=None,
 ):
     """Build and save a map with selectable demographic choropleth backdrops
     and one bubble layer for ``metric``, sized by magnitude.
@@ -580,17 +644,20 @@ def build_metric_bubble_map(
         references them, which throws a JS ReferenceError and silently
         breaks the whole control — see Folium's own LayerControl docstring
         ("should be added last to the map").
+    color : str
+        Fixed marker fill color for the bubble layer; passed through to
+        ``add_bubble_layer``. Defaults to its same near-black default.
+    subtitle : str or None
+        Overrides the auto-generated map subtitle ("Choropleth: ... Bubbles:
+        ..."). Use when ``extra_layers`` adds other layer types (polygons,
+        categorical points) that the auto-generated text wouldn't describe.
     """
     tooltip_fields = tooltip_fields if tooltip_fields is not None else ["tract_label", "nta_name"]
     tooltip_aliases = tooltip_aliases if tooltip_aliases is not None else ["Census tract", "NTA"]
     spec = metric_specs[metric]
     map_object = make_base_map(tracts)
 
-    for index, demographic in enumerate(demographic_specs):
-        add_metric_layer(
-            map_object, tracts, demographic, demographic_specs[demographic],
-            show=index == 0, add_legend=False, overlay=False,
-        )
+    add_demographic_backdrop_layers(map_object, tracts, demographic_specs)
 
     add_bubble_layer(
         map_object,
@@ -603,6 +670,7 @@ def build_metric_bubble_map(
         lon_col=lon_col,
         tooltip_fields=tooltip_fields,
         tooltip_aliases=tooltip_aliases,
+        color=color,
         show=True,
         overlay=True,
     )
@@ -611,8 +679,10 @@ def build_metric_bubble_map(
     add_map_title(
         map_object,
         title,
-        "Choropleth: use the layer control to pick a demographic fill. "
-        f"Bubbles: {spec['label']}.",
+        subtitle if subtitle is not None else (
+            "Choropleth: use the layer control to pick a demographic fill. "
+            f"Bubbles: {spec['label']}."
+        ),
     )
     add_zero_value_legend(map_object, "#d9d9d9", "Demographic data not available")
     folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
@@ -649,11 +719,7 @@ def build_grouped_bubble_map(
     tooltip_aliases = tooltip_aliases if tooltip_aliases is not None else ["Census tract", "NTA"]
     map_object = make_base_map(tracts)
 
-    for index, demographic in enumerate(demographic_specs):
-        add_metric_layer(
-            map_object, tracts, demographic, demographic_specs[demographic],
-            show=index == 0, add_legend=False, overlay=False,
-        )
+    add_demographic_backdrop_layers(map_object, tracts, demographic_specs)
 
     for index, metric in enumerate(metrics):
         spec = metric_specs[metric]

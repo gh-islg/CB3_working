@@ -20,7 +20,8 @@ representative dimensions:
 2. Street and sidewalk cleanliness: `avg_acceptable_streets_pct`, `avg_acceptable_sidewalks_pct`
 3. Street tree health: individual living street trees (2015 TreesCount census)
    colored by health status (Good/Fair/Poor)
-4. EJ Area designation: `ej_area_flag` (shown as a hatched overlay on every map)
+4. Hurricane evaluation zones: these are overlaid with NYCHA housing and subsidized units at risk
+5. EJ Area designation: `ej_area_flag` (shown as a hatched overlay on every map)
 
 Every numeric metric is presented as a bubble layer sized by magnitude over
 selectable demographic choropleth base layers. Rodent inspections are point
@@ -50,9 +51,11 @@ for candidate in [Path.cwd(), *Path.cwd().parents]:
 
 from src.cb3_utils import add_polygon_centroids
 from src.map_utils import (
+    add_bubble_layer,
+    add_categorical_legend,
     add_categorical_point_layer,
+    add_demographic_backdrop_layers,
     add_map_title,
-    add_metric_layer,
     add_zero_value_legend,
     build_metric_bubble_map,
     find_project_dir,
@@ -73,11 +76,20 @@ RODENT_INSPECTION_POINTS_PATH = (
     PROJECT_DIR / "data" / "clean" / "environment_rodent_inspection_points.csv"
 )
 TREE_POINTS_PATH = PROJECT_DIR / "data" / "clean" / "environment_tree_points.csv"
+NYCHA_BUILDING_POINTS_PATH = (
+    PROJECT_DIR / "data" / "clean" / "environment_nycha_building_points.csv"
+)
+SUBSIDIZED_POINTS_PATH = (
+    PROJECT_DIR / "data" / "clean" / "housing_and_affordability_subsidized_points.csv"
+)
 TRACT_GEOMETRY_PATH = (
     PROJECT_DIR / "data" / "raw" / "Geography" / "2020_Census_Tracts_20260505.geojson"
 )
 SECTIONS_GEOMETRY_PATH = (
     PROJECT_DIR / "data" / "raw" / "Geography" / "DSNY_Sections_20260630.geojson"
+)
+EVAC_ZONES_PATH = (
+    PROJECT_DIR / "data" / "clean" / "cb3_hurricane_evacuation_zones.geojson"
 )
 MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "environment"
 MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -154,6 +166,36 @@ tree_points = tree_points.merge(
     how="left",
     validate="many_to_one",
 )
+
+# Read NYCHA residential building points (native lat/lon) and attach
+# tract/NTA labels for tooltips. category is a constant column (all
+# buildings render the same color) so add_categorical_point_layer's legend
+# reads "NYCHA residential building" instead of listing 17 development names.
+nycha_points = pd.read_csv(NYCHA_BUILDING_POINTS_PATH, dtype={"GEOID": "string"})
+nycha_points = nycha_points.merge(
+    tracts[["GEOID", "tract_label", "nta_name"]],
+    on="GEOID",
+    how="left",
+    validate="many_to_one",
+)
+nycha_points["category"] = "NYCHA residential building"
+
+# Read subsidized-housing building points (native lat/lon) from the Housing &
+# Affordability domain and attach tract/NTA labels for tooltips. This file
+# only covers buildings with a known 2025-2040 expiration window, not the
+# full subsidized stock, so "at risk" here means "at-risk units with a known
+# near-term expiration," not "all subsidized units."
+subsidized_points = pd.read_csv(SUBSIDIZED_POINTS_PATH, dtype={"GEOID": "string"})
+subsidized_points["at_risk_subsidized_units"] = (
+    subsidized_points["subsidized_units_expiring_2025_2030"].fillna(0)
+    + subsidized_points["subsidized_units_expiring_2031_2040"].fillna(0)
+)
+subsidized_points = subsidized_points.merge(
+    tracts[["GEOID", "tract_label", "nta_name"]],
+    on="GEOID",
+    how="left",
+    validate="many_to_one",
+)
 ```
 
 ```{python}
@@ -212,10 +254,6 @@ for metric in DEMOGRAPHIC_SPECS:
 ```{python}
 def add_ej_overlay(map_object, show=True):
     """Add EJ-designated tracts as a dashed-border checkbox overlay.
-
-    True SVG hatching is not available in Folium without third-party plugins,
-    so EJ tracts are rendered with a semi-transparent fill and a dashed border
-    to distinguish them from the underlying choropleth/bubble layers.
     """
     ej_tracts = tracts[tracts["ej_area_flag"].eq(1)][["GEOID", "tract_label", "nta_name", "geometry"]].copy()
     folium.GeoJson(
@@ -247,27 +285,63 @@ def add_ej_overlay(map_object, show=True):
     )
 
 
-# Thin, environment-domain-specific wrappers around the generic map builders
-# in src/map_utils.py, so call sites below don't have to repeat tracts/
-# METRIC_SPECS/DEMOGRAPHIC_SPECS/MAP_OUTPUT_DIR on every call. The EJ overlay
-# is added on top of every bubble map since it has no equivalent in the
-# generic builders.
-def create_single_metric_map(metric, **kwargs):
+# Thin, environment-domain-specific wrapper around build_metric_bubble_map,
+# so call sites below don't have to repeat tracts/DEMOGRAPHIC_SPECS/MAP_OUTPUT_DIR
+# or re-add the EJ overlay on every call. Every other map-building function
+# in this notebook (section, hurricane) routes through this one instead of
+# calling build_metric_bubble_map directly, so the EJ overlay is added in
+# exactly one place. metric_specs/title default to the tract-level METRIC_SPECS
+# case; pass overrides for other geographies (DSNY sections) or ad hoc specs
+# (the hurricane map's subsidized-housing bubble).
+def create_single_metric_map(metric, metric_specs=None, title=None, extra_layers=None, **kwargs):
+    metric_specs = metric_specs if metric_specs is not None else METRIC_SPECS
+    spec = metric_specs[metric]
+
     # The EJ overlay is passed as build_metric_bubble_map's extra_layers hook
-    # so it's added before that function's internal LayerControl, not after —
-    # a layer added after LayerControl renders in a later script tag than the
-    # one that references it, which throws a JS ReferenceError and silently
-    # breaks the whole control.
-    spec = METRIC_SPECS[metric]
+    # (composed with any caller-supplied extra_layers) so it's added before
+    # that function's internal LayerControl, not after — a layer added after
+    # LayerControl renders in a later script tag than the one that
+    # references it, which throws a JS ReferenceError and silently breaks
+    # the whole control.
+    def combined_extra_layers(map_object):
+        add_ej_overlay(map_object, show=False)
+        if extra_layers is not None:
+            extra_layers(map_object)
+
     return build_metric_bubble_map(
-        tracts, METRIC_SPECS, DEMOGRAPHIC_SPECS, metric,
-        title=f"CB3 Environmental Conditions: {spec['dimension']}",
+        tracts, metric_specs, DEMOGRAPHIC_SPECS, metric,
+        title=title if title is not None else f"CB3 Environmental Conditions: {spec['dimension']}",
         output_path=MAP_OUTPUT_DIR / spec["filename"],
-        extra_layers=lambda m: add_ej_overlay(m, show=False),
+        extra_layers=combined_extra_layers,
         **kwargs,
     )
 
 
+
+```
+
+## Separate maps
+
+
+### Rodent inspections
+
+```{python}
+# Rodent inspections are reported at the building level, not the tract level,
+# so bubbles use each building's own coordinates rather than a tract centroid.
+rodent_map = create_single_metric_map(
+    "rodent_active_inspections",
+    points=rodent_insp_points,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["address", "tract_label"],
+    tooltip_aliases=["Address", "Census tract"],
+)
+rodent_map
+```
+
+### Street cleanliness (section level)
+
+```{python}
 # Load cleaning section geometry and averages for the section-level maps.
 # The DSNY sections geojson uses the 'section' column (MN031–MN034), which
 # matches the 'section' column in environment_sections.csv.
@@ -315,24 +389,30 @@ def add_section_outline_overlay(map_object, show=True):
 
 
 def create_section_map(metric):
-    def extra_layers(map_object):
-        add_ej_overlay(map_object, show=False)
-        add_section_outline_overlay(map_object, show=False)
-
-    spec = SECTION_METRIC_SPECS[metric]
-    return build_metric_bubble_map(
-        tracts, SECTION_METRIC_SPECS, DEMOGRAPHIC_SPECS, metric,
-        title=f"CB3 Environmental Conditions: {spec['dimension']}",
-        output_path=MAP_OUTPUT_DIR / spec["filename"],
+    return create_single_metric_map(
+        metric,
+        metric_specs=SECTION_METRIC_SPECS,
         points=section_points,
         lat_col="section_centroid_latitude",
         lon_col="section_centroid_longitude",
         tooltip_fields=["section"],
         tooltip_aliases=["Cleaning section"],
-        extra_layers=extra_layers,
+        extra_layers=lambda m: add_section_outline_overlay(m, show=False),
     )
+streets_map = create_section_map("avg_acceptable_streets_pct")
+streets_map
+```
 
+### Sidewalk cleanliness (section level)
 
+```{python}
+sidewalks_map = create_section_map("avg_acceptable_sidewalks_pct")
+sidewalks_map
+```
+
+### Street tree health
+
+```{python}
 # Living street trees are colored by health status rather than sized by
 # magnitude, so each color is a fixed marker fill rather than a legend tied
 # to bubble size.
@@ -345,11 +425,7 @@ def create_tree_health_map():
     # magnitude), so this is built directly from the generic layer helpers
     # rather than build_metric_bubble_map.
     map_object = make_base_map(tracts)
-    for index, demographic in enumerate(DEMOGRAPHIC_SPECS):
-        add_metric_layer(
-            map_object, tracts, demographic, DEMOGRAPHIC_SPECS[demographic],
-            show=index == 0, add_legend=False, overlay=False,
-        )
+    add_demographic_backdrop_layers(map_object, tracts, DEMOGRAPHIC_SPECS)
     add_ej_overlay(map_object, show=False)
     add_categorical_point_layer(
         map_object,
@@ -371,48 +447,122 @@ def create_tree_health_map():
     folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
     map_object.save(TREE_HEALTH_OUTPUT_PATH)
     return map_object
-```
 
-## Separate maps
-
-
-### Rodent inspections
-
-```{python}
-# Rodent inspections are reported at the building level, not the tract level,
-# so bubbles use each building's own coordinates rather than a tract centroid.
-rodent_map = create_single_metric_map(
-    "rodent_active_inspections",
-    points=rodent_insp_points,
-    lat_col="latitude",
-    lon_col="longitude",
-    tooltip_fields=["address", "tract_label"],
-    tooltip_aliases=["Address", "Census tract"],
-)
-rodent_map
-```
-
-### Street cleanliness (section level)
-
-```{python}
-streets_map = create_section_map("avg_acceptable_streets_pct")
-streets_map
-```
-
-### Sidewalk cleanliness (section level)
-
-```{python}
-sidewalks_map = create_section_map("avg_acceptable_sidewalks_pct")
-sidewalks_map
-```
-
-### Street tree health
-
-```{python}
 # Living street trees have no magnitude to bubble by, so each tree is plotted
 # at its own coordinates as a fixed-size marker colored by health status.
 tree_health_map = create_tree_health_map()
 tree_health_map
+```
+
+### Hurricane evacuation zones & at-risk housing
+
+```{python}
+# Hurricane evacuation zones are already clipped to the CB3 tract boundary in
+# environment.py (the raw citywide file is 7MB covering the whole coastline).
+evac_zones_clipped = gpd.read_file(EVAC_ZONES_PATH)
+evac_zones_clipped["evacuation_zone"] = evac_zones_clipped["evacuation_zone"].astype(str)
+
+# Zone 1 evacuates first (highest risk); "X" means not in an evacuation zone.
+EVAC_ZONE_COLORS = {
+    "1": "#a50026",
+    "2": "#d73027",
+    "3": "#f46d43",
+    "4": "#fdae61",
+    "5": "#fee08b",
+    "6": "#d9ef8b",
+    "7": "#a6d96a",
+    "X": "#d9d9d9",
+}
+NYCHA_COLOR = "#252525"
+SUBSIDIZED_BUBBLE_COLOR = "#08589e"
+HURRICANE_MAP_OUTPUT_PATH = MAP_OUTPUT_DIR / "hurricane_evacuation_zones.html"
+
+
+def add_evacuation_zone_layer(map_object, show=True, legend_bottom_offset=35):
+    """Add NYC Hurricane Evacuation Zones (clipped to CB3) as an always-on
+    categorical polygon overlay, colored by zone severity. Unlike the
+    demographic layers, zones aren't meant to be toggled one at a time —
+    the map is read as one combined zone picture, same as NYC's own
+    evacuation zone finder.
+    """
+    layer_data = evac_zones_clipped[["evacuation_zone", "geometry"]]
+    folium.GeoJson(
+        data=layer_data.to_json(),
+        name="Hurricane evacuation zones",
+        overlay=True,
+        show=show,
+        style_function=lambda feature: {
+            "fillColor": EVAC_ZONE_COLORS.get(feature["properties"]["evacuation_zone"], "#d9d9d9"),
+            "color": "#4d4d4d",
+            "weight": 1,
+            "fillOpacity": 0.55,
+        },
+        highlight_function=lambda _: {"weight": 3, "fillOpacity": 0.75},
+        tooltip=folium.GeoJsonTooltip(
+            fields=["evacuation_zone"],
+            aliases=["Hurricane evacuation zone"],
+            sticky=False,
+        ),
+    ).add_to(map_object)
+    add_categorical_legend(
+        map_object, "Hurricane evacuation zone", EVAC_ZONE_COLORS,
+        bottom_offset=legend_bottom_offset, shape="square",
+    )
+
+# Ad hoc spec for create_single_metric_map: subsidized housing at risk is the
+# one magnitude-sized layer on this map, so it doubles as the primary bubble
+# metric; the evacuation zones (categorical polygons) and NYCHA buildings
+# (no magnitude) are added via extra_layers instead of needing a bespoke map
+# function. filename feeds create_single_metric_map's output_path.
+HURRICANE_SUBSIDIZED_SPEC = {
+    "dimension": "Subsidized housing at risk",
+    "label": "Subsidized units at risk of expiring (2025-2040)",
+    "unit": " units",
+    "filename": HURRICANE_MAP_OUTPUT_PATH.name,
+}
+
+
+def create_hurricane_evacuation_map():
+    # Legend offsets are staggered (35 / 260 / 460) so the subsidized-housing
+    # bubble-size legend (up to 3 rows), the zone legend (up to 8 rows), and
+    # the NYCHA point legend (1 row) stack without overlapping.
+    def extra_layers(map_object):
+        add_evacuation_zone_layer(map_object, show=True, legend_bottom_offset=260)
+        add_categorical_point_layer(
+            map_object,
+            nycha_points,
+            "category",
+            {"NYCHA residential building": NYCHA_COLOR},
+            name="NYCHA residential buildings",
+            tooltip_fields=["development_name", "address", "tract_label"],
+            tooltip_aliases=["Development", "Address", "Census tract"],
+            show=True,
+            legend_bottom_offset=460,
+        )
+
+    return create_single_metric_map(
+        "at_risk_subsidized_units",
+        metric_specs={"at_risk_subsidized_units": HURRICANE_SUBSIDIZED_SPEC},
+        title="CB3 Environmental Conditions: Hurricane Evacuation Zones & At-Risk Housing",
+        points=subsidized_points,
+        lat_col="latitude",
+        lon_col="longitude",
+        tooltip_fields=["standard_address", "tract_label"],
+        tooltip_aliases=["Address", "Census tract"],
+        color=SUBSIDIZED_BUBBLE_COLOR,
+        extra_layers=extra_layers,
+        subtitle=(
+            "Choropleth: use the layer control to pick a demographic fill. Polygons: NYC hurricane evacuation "
+            "zones (Zone 1 evacuates first). Bubbles: subsidized units with a known 2025-2040 expiration window "
+            "(not the full subsidized stock). Points: NYCHA residential buildings."
+        ),
+    )
+
+# NYC Hurricane Evacuation Zones layered over CB3, cross-overlaid with
+# subsidized housing at risk of expiring and NYCHA residential buildings, to
+# show how much regulated affordable stock sits in higher-risk zones.
+hurricane_map = create_hurricane_evacuation_map()
+hurricane_map
 ```
 
 
@@ -423,6 +573,7 @@ expected_map_files = (
     [MAP_OUTPUT_DIR / spec["filename"] for spec in METRIC_SPECS.values()]
     + [MAP_OUTPUT_DIR / spec["filename"] for spec in SECTION_METRIC_SPECS.values()]
     + [TREE_HEALTH_OUTPUT_PATH]
+    + [HURRICANE_MAP_OUTPUT_PATH]
 )
 
 for map_file in expected_map_files:

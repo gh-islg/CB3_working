@@ -3,6 +3,8 @@ It uses only local project data and writes:
     data/clean/environment_tract.csv
     data/clean/environment_rodent_inspection_points.csv
     data/clean/environment_tree_points.csv
+    data/clean/environment_nycha_building_points.csv
+    data/clean/cb3_hurricane_evacuation_zones.geojson
 """
 #%%
 from pathlib import Path
@@ -30,11 +32,13 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 RAW_DIR = PROJECT_DIR / "data" / "raw" / "Environment"
 GEOGRAPHY_DIR = PROJECT_DIR / "data" / "raw" / "Geography"
 RELATIONSHIP_DIR = GEOGRAPHY_DIR / "GeographicRelationshipFiles"
+HOUSING_RAW_DIR = PROJECT_DIR / "data" / "raw" / "Housing and Affordability"
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
 OUTPUT_PATH = CLEAN_DIR / "environment_tract.csv"
 LOG_PATH = CLEAN_DIR / "environment_log.txt"
 RODENT_INSPECTION_POINTS_PATH = CLEAN_DIR / "environment_rodent_inspection_points.csv"
 TREE_POINTS_PATH = CLEAN_DIR / "environment_tree_points.csv"
+NYCHA_BUILDING_POINTS_PATH = CLEAN_DIR / "environment_nycha_building_points.csv"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 #%%
 
@@ -137,14 +141,14 @@ rodent_insp["INSPECTION_DATE"] = pd.to_datetime(
 rodent_insp_active = rodent_insp[rodent_insp["RESULT"].isin(ACTIVE_RODENT_RESULTS)].copy()
 
 # Restrict to the latest 5 years of data (relative to the most recent
-# inspection in the file) instead of the full 2002-2026 history, so the
+# inspection in the file) instead of the full 2015-2026 history (one rogue 2002), so the
 # metric reflects recent conditions rather than two decades of accumulation.
 rodent_insp_latest_date = rodent_insp_active["INSPECTION_DATE"].max()
 rodent_insp_cutoff_date = rodent_insp_latest_date - pd.DateOffset(years=5)
 rodent_insp_active = rodent_insp_active[
     rodent_insp_active["INSPECTION_DATE"] >= rodent_insp_cutoff_date
 ].copy()
-
+# spatial join on coordinates via assign_points_to_cb3_tract()
 rodent_insp_active["GEOID"] = _assign(
     rodent_insp_active, "LONGITUDE", "LATITUDE", "CENSUS TRACT"
 )
@@ -192,6 +196,68 @@ tree_points = trees_cb3_mapped[
 ].copy()
 tree_points.to_csv(TREE_POINTS_PATH, index=False)
 print(f"Wrote {len(tree_points)} alive street tree points to {TREE_POINTS_PATH}")
+#%%
+
+# NYCHA residential buildings (for the hurricane evacuation zone map)
+
+# Sourced from the Housing & Affordability domain's NYCHA code-violations file
+# (the only local file with building-level NYCHA coordinates), since there is
+# no dedicated NYCHA development roster in the raw data. Each violation is
+# tied to a specific residential building, so deduplicating on BBL gives one
+# point per actual NYCHA residential building rather than a development's
+# non-residential amenity sites (community centers, senior centers, etc. —
+# see NYCHA_Facilities_and_Service_Centers, which is not building-level).
+nycha = pd.read_csv(
+    HOUSING_RAW_DIR / "Housing_Maintenance_Code_Violations_NYCHA_properties_20260420.csv",
+    low_memory=False,
+)
+nycha = nycha[
+    nycha["Primary Borough Name"].eq("MANHATTAN")
+    & nycha["Community Board"].eq(103)
+].copy()
+nycha["GEOID"] = _assign(nycha, "Longitude", "Latitude", "Census Tract (2020)")
+nycha_unallocated_count = int(nycha["GEOID"].isna().sum())
+nycha_mapped = nycha[nycha["GEOID"].isin(CB3_GEOIDS)].copy()
+nycha_mapped["address"] = (
+    nycha_mapped["Primary House Number"].astype(str).str.strip()
+    + " " + nycha_mapped["Primary Street Name"].astype(str).str.strip()
+)
+
+nycha_building_points = (
+    nycha_mapped.groupby("BBL", as_index=False)
+    .agg(
+        development_name=("Development Name", "first"),
+        address=("address", "first"),
+        GEOID=("GEOID", "first"),
+        latitude=("Latitude", "first"),
+        longitude=("Longitude", "first"),
+    )
+)
+nycha_building_points.to_csv(NYCHA_BUILDING_POINTS_PATH, index=False)
+print(f"Wrote {len(nycha_building_points)} NYCHA residential building points to {NYCHA_BUILDING_POINTS_PATH}")
+#%%
+
+# Hurricane Evacuation Zones (NYC OEM)
+
+# Citywide file covering the whole coastline (7MB, hundreds of polygon parts
+# per zone), so clip to the CB3 tract boundary here rather than embedding the
+# full citywide geometry in every map that uses it.
+evac_zones = gpd.read_file(RAW_DIR / "Hurricane_Evacuation_Zones_20260708.geojson")
+evac_zones = evac_zones.rename(columns={"hurricane_": "evacuation_zone"})[
+    ["evacuation_zone", "geometry"]
+]
+evac_zones["evacuation_zone"] = evac_zones["evacuation_zone"].astype(str)
+
+cb3_boundary = cb3_tract_geometry.to_crs("EPSG:2263").geometry.union_all()
+evac_zones_proj = evac_zones.to_crs("EPSG:2263")
+evac_zones_proj["geometry"] = evac_zones_proj.geometry.intersection(cb3_boundary)
+evac_zones_clipped = evac_zones_proj[~evac_zones_proj.geometry.is_empty].to_crs("EPSG:4326")
+
+EVAC_ZONES_OUTPUT_PATH = CLEAN_DIR / "cb3_hurricane_evacuation_zones.geojson"
+evac_zones_clipped.to_file(EVAC_ZONES_OUTPUT_PATH, driver="GeoJSON")
+print(
+    f"Wrote {len(evac_zones_clipped)} CB3-clipped evacuation zones to {EVAC_ZONES_OUTPUT_PATH}"
+)
 #%%
 
 # Sanitation cleanliness (DSNY scorecard — section level)
@@ -282,6 +348,8 @@ log_lines = [
     f"restricted to latest 5 years ({rodent_insp_cutoff_date.strftime('%Y-%m-%d')} to "
     f"{rodent_insp_latest_date.strftime('%Y-%m-%d')})",
     f"Street trees:          {tree_unallocated_count} Alive CB3-board records not allocated to a tract",
+    f"NYCHA buildings:       {nycha_unallocated_count} MN03 NYCHA violation records not allocated to a tract; "
+    f"{len(nycha_building_points)} unique residential buildings (by BBL) from violation records",
     "",
     "=== Data Availability ===",
     f"Sanitation cleanliness: Reported at cleaning section level (MN031-MN034). "
@@ -319,6 +387,8 @@ validation = pd.Series(
         "ej_area_tracts": clean["ej_area_flag"].sum(),
         "mapped_rodent_active_inspections": clean["rodent_active_inspections"].sum(),
         "mapped_alive_trees": len(tree_points),
+        "nycha_residential_buildings": len(nycha_building_points),
+        "cb3_evacuation_zone_parts": len(evac_zones_clipped),
     }
 )
 print(validation.to_frame("value").to_string())
