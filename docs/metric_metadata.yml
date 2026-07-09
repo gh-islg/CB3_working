@@ -1,6 +1,11 @@
 # CB3 Equity Report — metric metadata
 # One entry per output variable. Fields used by add_metric_layer() are marked (map).
 # All other fields are for documentation, filtering, and future tooling.
+#
+# category_colors (map): {category: hex} mapping for categorical layers (points
+# or polygons colored by category rather than a numeric quintile choropleth).
+# Used instead of palette, which is reserved for quintile/continuous choropleths.
+# map_classification: categorical marks entries that use it.
 
 # --- Housing & Affordability ---
 
@@ -289,6 +294,114 @@ indoor_sewage_complaints:
   higher_is: worse
   map_classification: quintile
   display_format: count
+
+pm25:
+  domain: environment
+  short_label: Fine particulate matter (PM2.5)
+  label: "PM2.5 — modeled annual average (Dec 2023–Dec 2024)"
+  description: >
+    NYCCAS (NYC Community Air Survey, DOHMH) Land Use Regression-modeled
+    annual average PM2.5, at its native 300m grid resolution and clipped to
+    the CB3 tract boundary. Plotted at each grid cell's own centroid rather
+    than averaged to a tract value, since a 300m cell does not align with
+    tract boundaries. DOHMH states this modeled surface is not comparable to
+    regulatory monitoring or short-term localized monitoring.
+  unit: " ug/m3"
+  source: NYCCAS air pollution rasters (DOHMH)
+  year: 2024
+  geography: NYCCAS 300m grid cell (plotted at centroid)
+  higher_is: worse
+  map_classification: continuous
+  display_format: number
+  filename: environment_pm25.html
+
+tree_health:
+  domain: environment
+  short_label: Street tree health
+  label: Living street tree health status
+  description: >
+    Health rating (Good/Fair/Poor) of individual living street trees from the
+    2015 TreesCount census, plotted at each tree's own coordinates rather
+    than a tract statistic (no numeric magnitude to size a bubble by).
+  category_colors:
+    Good: "#238b45"
+    Fair: "#fec44f"
+    Poor: "#d94701"
+  source: 2015 Street Tree Census (NYC Parks)
+  year: 2015
+  geography: Individual street tree
+  higher_is: n/a
+  map_classification: categorical
+  display_format: category
+  filename: street_tree_health.html
+
+nycha_residential_building:
+  domain: environment
+  short_label: NYCHA residential buildings
+  label: NYCHA residential building
+  description: >
+    Individual NYCHA residential buildings (by BBL), derived from Housing
+    Maintenance Code Violation records as the only local file with
+    building-level NYCHA coordinates. Shown as a fixed-color overlay on the
+    hurricane evacuation zone map.
+  category_colors:
+    NYCHA residential building: "#252525"
+  source: NYC HPD Housing Maintenance Code Violations (NYCHA properties)
+  year: 2026
+  geography: Individual NYCHA residential building (BBL)
+  higher_is: n/a
+  map_classification: categorical
+  display_format: category
+  filename: hurricane_evacuation_zones.html
+
+dec_air_registrations:
+  domain: environment
+  short_label: DEC air facility registrations
+  label: NYS DEC air facility registration
+  description: >
+    Individual facilities holding a NYS DEC air facility registration, the
+    smallest of three emissions permit tiers (Title V, ASF, Registrations),
+    issued to facilities with annual emissions below half the major-source
+    threshold that do not require permit conditions. The other two tiers
+    (Title V, ASF) were checked and found to have zero facilities within the
+    CB3 tract boundary; Con Edison's East River Generating Station (Title V)
+    sits ~150 feet from the boundary but just outside it, so is not included
+    as an in-boundary point. Shown as a point-source overlay on the PM2.5 map
+    per the original concept doc (supplement to PM2.5, alongside EPA TRI).
+  category_colors:
+    DEC air facility registration: "#6a51a3"
+  source: NYSDEC Air Facility Registrations
+  year: 2026
+  geography: Individual facility point
+  higher_is: worse
+  map_classification: categorical
+  display_format: category
+  filename: environment_pm25.html
+
+hurricane_evacuation_zone:
+  domain: environment
+  short_label: Hurricane evacuation zone
+  label: NYC hurricane evacuation zone
+  description: >
+    NYC OEM hurricane evacuation zone designation (Zone 1 evacuates first;
+    "X" indicates not in an evacuation zone), clipped to the CB3 tract
+    boundary.
+  category_colors:
+    "1": "#a50026"
+    "2": "#d73027"
+    "3": "#f46d43"
+    "4": "#fdae61"
+    "5": "#fee08b"
+    "6": "#d9ef8b"
+    "7": "#a6d96a"
+    "X": "#d9d9d9"
+  source: NYC OEM Hurricane Evacuation Zones
+  year: 2026
+  geography: NYC Hurricane Evacuation Zone polygon (clipped to CB3)
+  higher_is: worse
+  map_classification: categorical
+  display_format: category
+  filename: hurricane_evacuation_zones.html
 
 # --- Demographics (baseline context, not domain outcomes) ---
 
