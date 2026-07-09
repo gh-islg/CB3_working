@@ -1,6 +1,5 @@
 """Reusable Folium mapping helpers for CB3 project notebooks and scripts."""
 
-import json
 from pathlib import Path
 
 import branca.colormap as cm
@@ -226,118 +225,563 @@ def add_metric_layer(
     return layer
 
 
-def add_dynamic_metric_legend(map_object, legend_payload, initial_metric_name, legend_id="metric-legend"):
-    """Inject a fixed-position legend that updates when the active base layer changes.
+def add_tract_outline_layer(
+    map_object,
+    tracts,
+    name="Census tract boundaries",
+    color="#999999",
+    weight=1,
+    show=True,
+    control=False,
+    overlay=True,
+):
+    """Add a plain, unfilled tract-boundary layer for context under point/bubble layers.
 
     Parameters
     ----------
     map_object : folium.Map
-    legend_payload : dict
-        Keyed by metric dimension name (the layer-control label). Each value is a
-        dict with keys ``title``, ``subtitle``, and ``entries`` (list of
-        ``{"color": hex, "label": str}`` dicts).
-    initial_metric_name : str
-        The dimension name shown when the map first loads.
-    legend_id : str
-        CSS ``id`` for the legend ``<div>``. Use a unique value per page if multiple
-        dynamic legends could ever appear in the same HTML file.
-
-    Notes
-    -----
-    Folium initializes the Leaflet map variable in a ``<script>`` block placed
-    *after* ``</body>``, so any inline legend script that references the map
-    variable by name would throw a ``ReferenceError``. Both the ``baselayerchange``
-    event listener and the radio-input fallback are therefore deferred into a
-    ``setTimeout`` and the map is accessed via ``window["<var_name>"]`` to avoid
-    a hard reference error if the timeout fires before map initialization completes.
+    tracts : GeoDataFrame
+        Must contain ``tract_label``, ``nta_name``, and ``geometry``.
+    name : str
+        Layer-control name (only shown if ``control`` is True).
+    color, weight : line style for the tract boundaries.
+    show : bool
+        Whether the layer is visible on load.
+    control : bool
+        Whether this layer appears as a toggle in the layer control. Defaults
+        to False since it is meant as a fixed reference layer, not a dataset
+        the viewer selects.
+    overlay : bool
+        True → checkbox (overlay); False → radio button (base layer), for
+        grouping this as a mutually-exclusive option alongside demographic
+        choropleth layers (see ``add_demographic_backdrop_layers``).
     """
-    safe_id = legend_id.replace("-", "_")
-    js_data_var = f"cb3LegendData_{safe_id}"
-    js_fn_name = f"updateCb3Legend_{safe_id}"
-    map_var = map_object.get_name()
+    layer_data = tracts[["tract_label", "nta_name", "geometry"]]
+    layer = folium.GeoJson(
+        data=layer_data.to_json(),
+        name=name,
+        show=show,
+        control=control,
+        overlay=overlay,
+        style_function=lambda feature: {
+            "fillOpacity": 0,
+            "color": color,
+            "weight": weight,
+        },
+        tooltip=GeoJsonTooltip(
+            fields=["tract_label", "nta_name"],
+            aliases=["Census tract", "NTA"],
+            sticky=False,
+        ),
+    )
+    layer.add_to(map_object)
+    return layer
 
+
+def add_demographic_backdrop_layers(
+    map_object, tracts, demographic_specs, none_option_label="No demographic background"
+):
+    """Add each demographic metric as a selectable (radio-button) choropleth
+    base layer, plus a plain tract-outline option with no fill so viewers can
+    turn off the demographic backdrop entirely. The first demographic layer
+    is shown by default; the outline option is available but not shown.
+
+    Parameters
+    ----------
+    map_object : folium.Map
+    tracts : GeoDataFrame
+        Must contain every column referenced by ``demographic_specs``, plus
+        ``tract_label``, ``nta_name``, and ``geometry``.
+    demographic_specs : dict
+        Keyed by column name; drawn as selectable (radio-button) choropleth
+        base layers, one shown at a time.
+    none_option_label : str
+        Layer-control label for the no-fill tract-outline option.
+    """
+    for index, demographic in enumerate(demographic_specs):
+        add_metric_layer(
+            map_object, tracts, demographic, demographic_specs[demographic],
+            show=index == 0, add_legend=False, overlay=False,
+        )
+    add_tract_outline_layer(
+        map_object, tracts, name=none_option_label, show=False, control=True, overlay=False,
+    )
+
+
+def add_bubble_layer(
+    map_object,
+    points,
+    value_col,
+    label,
+    unit,
+    name=None,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=None,
+    tooltip_aliases=None,
+    color="#1a1a1a",
+    outline_color="#ffffff",
+    min_radius=5,
+    max_radius=22,
+    scale_from_min=False,
+    show=True,
+    overlay=True,
+    add_legend=True,
+    legend_bottom_offset=35,
+):
+    """Add a sized-circle-marker layer for a point-level metric to a Folium map.
+
+    One circle is drawn per row in ``points``. Radius scales with the square
+    root of ``value_col`` so that circle *area* (not radius) is proportional to
+    magnitude. Use this directly for metrics with native coordinates (e.g.
+    building addresses); for metrics only available at the tract/NTA level,
+    first attach polygon centroid coordinates to ``lat_col``/``lon_col`` and
+    pass the result in.
+
+    Parameters
+    ----------
+    map_object : folium.Map
+    points : DataFrame
+        Must contain ``lat_col``, ``lon_col``, and ``value_col``.
+    value_col : str
+        Column to size circles by.
+    label : str
+        Human-readable metric label used in tooltips and the size legend.
+    unit : str
+        Passed to ``format_metric_value`` for tooltip/legend text.
+    name : str or None
+        Layer-control name; defaults to ``label``.
+    tooltip_fields, tooltip_aliases : list or None
+        Extra columns/aliases shown in the tooltip alongside ``value_col``.
+    color : str
+        Fixed marker fill color for every circle in this layer. The default
+        (near-black) plus the white ``outline_color`` halo keep bubbles
+        legible over any of the demographic choropleth palettes underneath.
+    outline_color : str
+        Marker stroke color, drawn as a halo around the fill so bubbles stay
+        visible regardless of the color scheme of an underlying choropleth.
+    min_radius, max_radius : float
+        Pixel radius bounds for the smallest and largest non-zero values.
+    scale_from_min : bool
+        By default, radius scales as sqrt(value / max_value) — suited to
+        counts that meaningfully range down to zero (rodent inspections,
+        violations), where a value near zero should look near-invisible.
+        Set True for metrics that vary only modestly and never approach zero
+        (e.g. a concentration like PM2.5, ranging ~6.5-10.6 ug/m3): radius
+        instead scales as sqrt((value - min_value) / (max_value - min_value)),
+        so the least and most extreme observed values stretch across the
+        full min_radius-max_radius range instead of bunching near max_radius.
+    show : bool
+        Whether the layer is visible on load.
+    overlay : bool
+        True → checkbox (overlay); False → radio button (base layer).
+    add_legend : bool
+        Whether to attach a bubble-size legend to the map.
+    legend_bottom_offset : int
+        Pixels from the bottom of the map to the legend box. Increase for each
+        additional bubble layer on the same map so legends stack without
+        overlapping.
+    """
+    layer_name = name or label
+    plot_points = points[points[value_col] > 0].copy()
+
+    max_value = plot_points[value_col].max()
+    min_value = plot_points[value_col].min() if scale_from_min else 0
+    value_range = max_value - min_value
+
+    def radius_for(value):
+        if scale_from_min:
+            if value_range <= 0:
+                return max_radius
+            # Clamp to 0 before the sqrt: the legend passes rounded reference
+            # values (see add_bubble_size_legend) that can fall slightly below
+            # the true observed min, which would otherwise make (value -
+            # min_value) negative — and a negative number raised to the 0.5
+            # power in Python silently returns a complex number rather than
+            # raising, which breaks SVG rendering for that legend row.
+            ratio = max(0.0, (value - min_value) / value_range)
+            return min_radius + (max_radius - min_radius) * ratio ** 0.5
+        if max_value <= 0:
+            return min_radius
+        return min_radius + (max_radius - min_radius) * (value / max_value) ** 0.5
+
+    fields = [value_col] + (tooltip_fields or [])
+    aliases = [label] + (tooltip_aliases or [])
+
+    layer = folium.FeatureGroup(name=layer_name, show=show, control=overlay)
+    for _, row in plot_points.iterrows():
+        tooltip_lines = [
+            f"{alias}: {format_metric_value(row[field], unit) if field == value_col else row[field]}"
+            for field, alias in zip(fields, aliases)
+        ]
+        folium.CircleMarker(
+            location=[row[lat_col], row[lon_col]],
+            radius=radius_for(row[value_col]),
+            color=outline_color,
+            weight=1.5,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.75,
+            tooltip=folium.Tooltip("<br>".join(tooltip_lines)),
+        ).add_to(layer)
+    layer.add_to(map_object)
+
+    if add_legend and max_value > 0:
+        add_bubble_size_legend(
+            map_object, label, unit, max_value, radius_for, color,
+            bottom_offset=legend_bottom_offset,
+            min_value=min_value if scale_from_min else None,
+        )
+
+    return layer
+
+
+def add_bubble_size_legend(map_object, label, unit, max_value, radius_fn, color, bottom_offset=35, min_value=None):
+    """Add a fixed-position legend showing three reference bubble sizes.
+
+    By default shows fractions of the maximum (max, max/2, max/8), suited to
+    counts that range down toward zero. Pass ``min_value`` (the layer's
+    ``scale_from_min=True`` case) to show the observed min/midpoint/max
+    instead — fractions of max wouldn't correspond to the actual radius
+    scale when bubbles are sized relative to the observed minimum.
+    """
+    if min_value is not None:
+        reference_values = sorted({round(v) for v in (min_value, (min_value + max_value) / 2, max_value)})
+    else:
+        reference_values = sorted(set(round(v) for v in (max_value, max_value / 2, max_value / 8) if v > 0))
+    svg_size = 2 * radius_fn(max(reference_values))
+    rows_html = "".join(
+        f"""
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+          <svg width="{svg_size}" height="{svg_size}" style="flex:0 0 auto;">
+            <circle cx="{svg_size / 2}" cy="{svg_size / 2}" r="{radius_fn(value)}"
+                    fill="{color}" fill-opacity="0.75" stroke="#777" stroke-width="1" />
+          </svg>
+          <span>{format_metric_value(value, unit)}</span>
+        </div>
+        """
+        for value in reversed(reference_values)
+    )
     legend_html = f"""
-    <style>
-      #{legend_id} {{
+    <div style="
         position: fixed;
-        left: 50px;
-        bottom: 35px;
+        bottom: {bottom_offset}px;
+        right: 20px;
         z-index: 9999;
-        width: 260px;
-        box-sizing: border-box;
-        padding: 10px 12px;
         background: rgba(255,255,255,0.94);
         border: 1px solid #777;
         border-radius: 4px;
-        font-family: Arial, sans-serif;
-        color: #222;
-      }}
-      #{legend_id} .legend-title {{
-        font-size: 13px;
-        font-weight: 700;
-        margin-bottom: 3px;
-      }}
-      #{legend_id} .legend-subtitle {{
-        font-size: 11px;
-        line-height: 1.25;
-        color: #555;
-        margin-bottom: 8px;
-      }}
-      #{legend_id} .legend-row {{
-        display: flex;
-        align-items: center;
-        gap: 7px;
-        margin: 4px 0;
-        font-size: 11px;
-      }}
-      #{legend_id} .legend-swatch {{
-        width: 15px;
-        height: 15px;
-        flex: 0 0 15px;
-        border: 1px solid #777;
-      }}
-    </style>
-    <div id="{legend_id}"></div>
-    <script>
-      const {js_data_var} = {json.dumps(legend_payload)};
-      function {js_fn_name}(metricName) {{
-        const legend = document.getElementById("{legend_id}");
-        const data = {js_data_var}[metricName];
-        if (!legend || !data) return;
-        const rows = data.entries.map(entry => `
-          <div class="legend-row">
-            <span class="legend-swatch" style="background:${{entry.color}}"></span>
-            <span>${{entry.label}}</span>
-          </div>
-        `).join("");
-        legend.innerHTML = `
-          <div class="legend-title">${{data.title}}</div>
-          <div class="legend-subtitle">${{data.subtitle}}</div>
-          ${{rows}}
-        `;
-      }}
-
-      {js_fn_name}({json.dumps(initial_metric_name)});
-
-      // Defer both the Leaflet event listener and the radio-input fallback until
-      // after the map variable is initialized (map init script runs after </body>).
-      setTimeout(function() {{
-        var mapObj = window["{map_var}"];
-        if (mapObj) {{
-          mapObj.on("baselayerchange", function(event) {{
-            {js_fn_name}(event.name);
-          }});
-        }}
-        document.querySelectorAll(".leaflet-control-layers-base label").forEach(function(label) {{
-          var input = label.querySelector("input[type='radio']");
-          var span = label.querySelector("span");
-          if (input && span) {{
-            input.addEventListener("change", function() {{
-              {js_fn_name}(span.textContent.trim());
-            }});
-          }}
-        }});
-      }}, 500);
-    </script>
+        padding: 8px 12px;
+        font: 12px Arial, sans-serif;
+        color: #222;">
+      <div style="font-weight:700;margin-bottom:4px;">{label}</div>
+      {rows_html}
+    </div>
     """
     map_object.get_root().html.add_child(folium.Element(legend_html))
+
+
+def add_categorical_point_layer(
+    map_object,
+    points,
+    category_col,
+    category_colors,
+    name,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=None,
+    tooltip_aliases=None,
+    size=15,
+    outline_color="#ffffff",
+    show=True,
+    overlay=True,
+    add_legend=True,
+    legend_bottom_offset=35,
+):
+    """Add fixed-size diamond markers colored by a categorical column.
+
+    Unlike ``add_bubble_layer`` (which sizes round markers by a numeric
+    magnitude and uses one fixed color), this draws same-size diamond
+    markers colored per ``category_col`` value, for point data distinguished
+    by category rather than magnitude (e.g. tree health status, violation
+    type). The diamond shape keeps "round = sized by magnitude" and
+    "diamond = categorical" as separate visual languages on the same map.
+    Rows whose category isn't a key in ``category_colors`` are dropped.
+
+    Parameters
+    ----------
+    map_object : folium.Map
+    points : DataFrame
+        Must contain ``lat_col``, ``lon_col``, and ``category_col``.
+    category_col : str
+        Column whose values select the marker color.
+    category_colors : dict
+        Maps each category value to a hex color; also defines the legend
+        order (top to bottom) and which categories are plotted.
+    name : str
+        Layer-control name.
+    tooltip_fields, tooltip_aliases : list or None
+        Extra columns/aliases shown in the tooltip alongside ``category_col``.
+    size : float
+        Pixel width/height of each diamond marker (measured corner to corner).
+    outline_color : str
+        Marker stroke color, drawn as a halo around the fill so markers stay
+        legible over any choropleth underneath.
+    show : bool
+        Whether the layer is visible on load.
+    overlay : bool
+        True → checkbox (overlay); False → radio button (base layer).
+    add_legend : bool
+        Whether to attach a categorical swatch legend to the map.
+    legend_bottom_offset : int
+        Pixels from the bottom of the map to the legend box. Increase if
+        another legend already occupies the default position.
+    """
+    plot_points = points[points[category_col].isin(category_colors)].copy()
+
+    fields = [category_col] + (tooltip_fields or [])
+    aliases = [category_col.replace("_", " ").title()] + (tooltip_aliases or [])
+
+    # A diamond is a square rotated 45deg; side length is set so the
+    # corner-to-corner width/height equals `size`.
+    side = round(size / 1.41421356, 1)
+
+    layer = folium.FeatureGroup(name=name, show=show, control=overlay)
+    for _, row in plot_points.iterrows():
+        tooltip_lines = [f"{alias}: {row[field]}" for field, alias in zip(fields, aliases)]
+        icon = folium.DivIcon(
+            html=f"""
+            <div style="
+                width: {side}px;
+                height: {side}px;
+                background: {category_colors[row[category_col]]};
+                border: 1.5px solid {outline_color};
+                box-shadow: 0 0 1px 1px rgba(0,0,0,0.35);
+                transform: rotate(45deg);
+                box-sizing: border-box;
+            "></div>
+            """,
+            icon_size=(side, side),
+            icon_anchor=(side / 2, side / 2),
+        )
+        folium.Marker(
+            location=[row[lat_col], row[lon_col]],
+            icon=icon,
+            tooltip=folium.Tooltip("<br>".join(tooltip_lines)),
+        ).add_to(layer)
+    layer.add_to(map_object)
+
+    if add_legend:
+        add_categorical_legend(map_object, name, category_colors, bottom_offset=legend_bottom_offset)
+
+    return layer
+
+
+def add_categorical_legend(map_object, title, category_colors, bottom_offset=35, shape="diamond"):
+    """Add a fixed-position legend showing one swatch per category.
+
+    Parameters
+    ----------
+    shape : str
+        ``"diamond"`` (default) matches the diamond point markers drawn by
+        ``add_categorical_point_layer``. Use ``"square"`` for categorical
+        polygon/fill layers (e.g. an evacuation-zone choropleth), where a
+        diamond swatch would misleadingly imply point markers.
+    """
+    swatch_transform = "transform:rotate(45deg);" if shape == "diamond" else ""
+    rows_html = "".join(
+        f"""
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+          <span style="display:inline-block;width:10px;height:10px;background:{color};
+                       border:1px solid #777;{swatch_transform}"></span>
+          <span>{label}</span>
+        </div>
+        """
+        for label, color in category_colors.items()
+    )
+    legend_html = f"""
+    <div style="
+        position: fixed;
+        bottom: {bottom_offset}px;
+        right: 20px;
+        z-index: 9999;
+        background: rgba(255,255,255,0.94);
+        border: 1px solid #777;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font: 12px Arial, sans-serif;
+        color: #222;">
+      <div style="font-weight:700;margin-bottom:4px;">{title}</div>
+      {rows_html}
+    </div>
+    """
+    map_object.get_root().html.add_child(folium.Element(legend_html))
+
+
+# Fixed color cycle for grouped bubble maps, so each related-metric layer
+# stays a stable, distinguishable color regardless of how many layers are
+# grouped together.
+GROUPED_BUBBLE_COLORS = ["#252525", "#db3232"]
+
+
+def build_metric_bubble_map(
+    tracts,
+    metric_specs,
+    demographic_specs,
+    metric,
+    title,
+    output_path,
+    points=None,
+    lat_col="tract_centroid_latitude",
+    lon_col="tract_centroid_longitude",
+    tooltip_fields=None,
+    tooltip_aliases=None,
+    extra_layers=None,
+    color="#1a1a1a",
+    subtitle=None,
+):
+    """Build and save a map with selectable demographic choropleth backdrops
+    and one bubble layer for ``metric``, sized by magnitude.
+
+    By default the bubble sits at each tract's centroid, since most metrics
+    are only reported at the tract level. Metrics with native, finer-grained
+    coordinates (e.g. individual building addresses) should pass their own
+    ``points``/``lat_col``/``lon_col`` instead, since collapsing them to a
+    tract centroid would discard real location detail.
+
+    Parameters
+    ----------
+    tracts : GeoDataFrame
+        Must contain ``geometry`` and every column referenced by
+        ``metric_specs``/``demographic_specs`` (unless ``points`` is given
+        for the bubble layer itself).
+    metric_specs : dict
+        Keyed by column name; values are specs as built for ``add_metric_layer``
+        (``dimension``, ``label``, ``unit``, ``palette``, ``filename`` unused here).
+    demographic_specs : dict
+        Keyed by column name; drawn as selectable (radio-button) choropleth
+        base layers, one shown at a time, for geographic/demographic context.
+    metric : str
+        Key into ``metric_specs`` for the bubble layer.
+    title : str
+        Map title text.
+    output_path : Path
+        Where to save the resulting HTML map.
+    points : DataFrame or None
+        Passed to ``add_bubble_layer``; defaults to ``tracts`` (tract centroids).
+    tooltip_fields, tooltip_aliases : list or None
+        Extra bubble tooltip fields; default to tract label/NTA.
+    extra_layers : callable or None
+        Optional ``f(map_object)`` invoked after the bubble layer but before
+        ``LayerControl`` is added, for domain-specific overlays (e.g. an EJ
+        Area overlay) that need to appear in the same control. Layers added
+        after ``LayerControl`` render in a later script tag than the one that
+        references them, which throws a JS ReferenceError and silently
+        breaks the whole control — see Folium's own LayerControl docstring
+        ("should be added last to the map").
+    color : str
+        Fixed marker fill color for the bubble layer; passed through to
+        ``add_bubble_layer``. Defaults to its same near-black default.
+    subtitle : str or None
+        Overrides the auto-generated map subtitle ("Choropleth: ... Bubbles:
+        ..."). Use when ``extra_layers`` adds other layer types (polygons,
+        categorical points) that the auto-generated text wouldn't describe.
+    """
+    tooltip_fields = tooltip_fields if tooltip_fields is not None else ["tract_label", "nta_name"]
+    tooltip_aliases = tooltip_aliases if tooltip_aliases is not None else ["Census tract", "NTA"]
+    spec = metric_specs[metric]
+    map_object = make_base_map(tracts)
+
+    add_demographic_backdrop_layers(map_object, tracts, demographic_specs)
+
+    add_bubble_layer(
+        map_object,
+        tracts if points is None else points,
+        metric,
+        spec["label"],
+        spec["unit"],
+        name=spec["dimension"],
+        lat_col=lat_col,
+        lon_col=lon_col,
+        tooltip_fields=tooltip_fields,
+        tooltip_aliases=tooltip_aliases,
+        color=color,
+        show=True,
+        overlay=True,
+    )
+    if extra_layers is not None:
+        extra_layers(map_object)
+    add_map_title(
+        map_object,
+        title,
+        subtitle if subtitle is not None else (
+            "Choropleth: use the layer control to pick a demographic fill. "
+            f"Bubbles: {spec['label']}."
+        ),
+    )
+    add_zero_value_legend(map_object, "#d9d9d9", "Demographic data not available")
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(output_path)
+    return map_object
+
+
+def build_grouped_bubble_map(
+    tracts,
+    metric_specs,
+    demographic_specs,
+    metrics,
+    title,
+    subtitle,
+    output_path,
+    points=None,
+    lat_col="tract_centroid_latitude",
+    lon_col="tract_centroid_longitude",
+    tooltip_fields=None,
+    tooltip_aliases=None,
+    extra_layers=None,
+):
+    """Like ``build_metric_bubble_map``, but adds one bubble layer per metric
+    in ``metrics`` so directly related metrics (e.g. two expiration windows,
+    or two violation-severity classes) can be compared side by side on a
+    single map instead of only one at a time. Each layer gets a distinct
+    color from ``GROUPED_BUBBLE_COLORS`` and its own stacked size legend.
+
+    Parameters mirror ``build_metric_bubble_map``, except ``metrics`` is a
+    list of keys into ``metric_specs`` and ``subtitle`` is required (there is
+    no single metric to derive default subtitle text from).
+    """
+    tooltip_fields = tooltip_fields if tooltip_fields is not None else ["tract_label", "nta_name"]
+    tooltip_aliases = tooltip_aliases if tooltip_aliases is not None else ["Census tract", "NTA"]
+    map_object = make_base_map(tracts)
+
+    add_demographic_backdrop_layers(map_object, tracts, demographic_specs)
+
+    for index, metric in enumerate(metrics):
+        spec = metric_specs[metric]
+        add_bubble_layer(
+            map_object,
+            tracts if points is None else points,
+            metric,
+            spec["label"],
+            spec["unit"],
+            name=spec["dimension"],
+            lat_col=lat_col,
+            lon_col=lon_col,
+            tooltip_fields=tooltip_fields,
+            tooltip_aliases=tooltip_aliases,
+            color=GROUPED_BUBBLE_COLORS[index % len(GROUPED_BUBBLE_COLORS)],
+            show=True,
+            overlay=True,
+            # Each bubble-size legend can be up to ~190px tall (title + 3
+            # reference rows at the default max_radius=22), so layers must be
+            # spaced further apart than that to avoid overlapping.
+            legend_bottom_offset=35 + index * 230,
+        )
+
+    if extra_layers is not None:
+        extra_layers(map_object)
+    add_map_title(map_object, title, subtitle)
+    add_zero_value_legend(map_object, "#d9d9d9", "Demographic data not available")
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(output_path)
+    return map_object
