@@ -4,7 +4,7 @@ It uses only local project data and writes:
     data/clean/environment_rodent_inspection_points.csv
     data/clean/environment_tree_points.csv
     data/clean/environment_nycha_building_points.csv
-    data/clean/environment_hurricane_evacuation_zones.geojson
+    data/clean/cb3_hurricane_evacuation_zones.geojson
 """
 #%%
 from pathlib import Path
@@ -141,14 +141,14 @@ rodent_insp["INSPECTION_DATE"] = pd.to_datetime(
 rodent_insp_active = rodent_insp[rodent_insp["RESULT"].isin(ACTIVE_RODENT_RESULTS)].copy()
 
 # Restrict to the latest 5 years of data (relative to the most recent
-# inspection in the file) instead of the full 2002-2026 history, so the
+# inspection in the file) instead of the full 2015-2026 history (one rogue 2002), so the
 # metric reflects recent conditions rather than two decades of accumulation.
 rodent_insp_latest_date = rodent_insp_active["INSPECTION_DATE"].max()
 rodent_insp_cutoff_date = rodent_insp_latest_date - pd.DateOffset(years=5)
 rodent_insp_active = rodent_insp_active[
     rodent_insp_active["INSPECTION_DATE"] >= rodent_insp_cutoff_date
 ].copy()
-
+# spatial join on coordinates via assign_points_to_cb3_tract()
 rodent_insp_active["GEOID"] = _assign(
     rodent_insp_active, "LONGITUDE", "LATITUDE", "CENSUS TRACT"
 )
@@ -253,7 +253,7 @@ evac_zones_proj = evac_zones.to_crs("EPSG:2263")
 evac_zones_proj["geometry"] = evac_zones_proj.geometry.intersection(cb3_boundary)
 evac_zones_clipped = evac_zones_proj[~evac_zones_proj.geometry.is_empty].to_crs("EPSG:4326")
 
-EVAC_ZONES_OUTPUT_PATH = CLEAN_DIR / "environment_hurricane_evacuation_zones.geojson"
+EVAC_ZONES_OUTPUT_PATH = CLEAN_DIR / "cb3_hurricane_evacuation_zones.geojson"
 evac_zones_clipped.to_file(EVAC_ZONES_OUTPUT_PATH, driver="GeoJSON")
 print(
     f"Wrote {len(evac_zones_clipped)} CB3-clipped evacuation zones to {EVAC_ZONES_OUTPUT_PATH}"
