@@ -354,6 +354,30 @@ nycha_residential_building:
   display_format: category
   filename: hurricane_evacuation_zones.html
 
+dec_air_registrations:
+  domain: environment
+  short_label: DEC air facility registrations
+  label: NYS DEC air facility registration
+  description: >
+    Individual facilities holding a NYS DEC air facility registration, the
+    smallest of three emissions permit tiers (Title V, ASF, Registrations),
+    issued to facilities with annual emissions below half the major-source
+    threshold that do not require permit conditions. The other two tiers
+    (Title V, ASF) were checked and found to have zero facilities within the
+    CB3 tract boundary; Con Edison's East River Generating Station (Title V)
+    sits ~150 feet from the boundary but just outside it, so is not included
+    as an in-boundary point. Shown as a point-source overlay on the PM2.5 map
+    per the original concept doc (supplement to PM2.5, alongside EPA TRI).
+  category_colors:
+    DEC air facility registration: "#6a51a3"
+  source: NYSDEC Air Facility Registrations
+  year: 2026
+  geography: Individual facility point
+  higher_is: worse
+  map_classification: categorical
+  display_format: category
+  filename: environment_pm25.html
+
 hurricane_evacuation_zone:
   domain: environment
   short_label: Hurricane evacuation zone

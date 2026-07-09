@@ -7,6 +7,7 @@ It uses only local project data and writes:
     data/clean/cb3_hurricane_evacuation_zones.geojson
     data/clean/environment_pm25_cb3.tif
     data/clean/environment_pm25_grid.geojson
+    data/clean/environment_dec_registrations_points.csv
 """
 #%%
 from pathlib import Path
@@ -48,6 +49,8 @@ NYCHA_BUILDING_POINTS_PATH = CLEAN_DIR / "environment_nycha_building_points.csv"
 PM25_RASTER_PATH = RAW_DIR / "AnnAvg_1_16_300m" / "aa16_pm300m"
 PM25_OUTPUT_PATH = CLEAN_DIR / "environment_pm25_cb3.tif"
 PM25_GRID_OUTPUT_PATH = CLEAN_DIR / "environment_pm25_grid.geojson"
+DEC_REGISTRATIONS_PATH = RAW_DIR / "Air_Facility_Registrations.geojson"
+DEC_REGISTRATIONS_POINTS_PATH = CLEAN_DIR / "environment_dec_registrations_points.csv"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 #%%
 
@@ -327,6 +330,35 @@ pm25_grid.to_file(PM25_GRID_OUTPUT_PATH, driver="GeoJSON")
 print(f"Wrote {len(pm25_grid)} PM2.5 grid-cell polygons to {PM25_GRID_OUTPUT_PATH}")
 #%%
 
+# NYS DEC Air Facility Registrations (pollution point-source overlay)
+
+# NYSDEC issues air permits in three tiers by facility size: Title V (ATV,
+# largest), Air State Facility (ASF, mid-size), and Registrations (smallest,
+# facilities below half the major-source emissions threshold). ASF and Title V
+# were checked separately and found to have zero facilities within the CB3
+# tract boundary (Con Edison's East River Generating Station, a Title V
+# facility, sits ~150 feet from the boundary but just outside it), so only
+# the Registrations file is processed into a CB3 point layer here. Statewide
+# file; filter to points falling within the 31-tract CB3 union.
+dec_registrations = gpd.read_file(DEC_REGISTRATIONS_PATH)
+dec_registrations["longitude"] = dec_registrations.geometry.x
+dec_registrations["latitude"] = dec_registrations.geometry.y
+dec_registrations["GEOID"] = _assign(dec_registrations, "longitude", "latitude")
+dec_registrations_unallocated_count = int(dec_registrations["GEOID"].isna().sum())
+dec_registrations_mapped = dec_registrations[
+    dec_registrations["GEOID"].isin(CB3_GEOIDS)
+].copy()
+
+dec_registrations_points = dec_registrations_mapped[
+    ["DEC_ID", "FACILITY_NAME", "GEOID", "latitude", "longitude"]
+].rename(columns={"DEC_ID": "dec_id", "FACILITY_NAME": "facility_name"})
+dec_registrations_points.to_csv(DEC_REGISTRATIONS_POINTS_PATH, index=False)
+print(
+    f"Wrote {len(dec_registrations_points)} DEC air facility registration points "
+    f"to {DEC_REGISTRATIONS_POINTS_PATH}"
+)
+#%%
+
 # Sanitation cleanliness (DSNY scorecard — section level)
 
 # Scorecard ratings are published at the DSNY cleaning section level (MN031-MN034),
@@ -428,6 +460,13 @@ log_lines = [
     f"not comparable to regulatory or short-term localized monitoring. "
     f"{pm25_valid.size} valid cells, {pm25_valid.min():.2f}-{pm25_valid.max():.2f} ug/m3. "
     f"Written to {PM25_OUTPUT_PATH.name} (raster); not yet joined to tract-level {OUTPUT_PATH.name}.",
+    f"DEC air permits:        Checked all three NYSDEC permit tiers (Title V, ASF, Registrations) "
+    f"against the CB3 boundary. Only Registrations (smallest tier) has facilities within CB3 "
+    f"({len(dec_registrations_points)} found; {dec_registrations_unallocated_count} statewide "
+    f"records not allocated to a tract, expected since most are outside CB3). ASF and Title V "
+    f"have zero facilities within CB3; Con Edison's East River Generating Station (Title V) sits "
+    f"~150 feet from the CB3 boundary but just outside it. Written to "
+    f"{DEC_REGISTRATIONS_POINTS_PATH.name}; not included in tract-level {OUTPUT_PATH.name}.",
 ]
 LOG_PATH.write_text("\n".join(log_lines), encoding="utf-8")
 print(f"Wrote build log to {LOG_PATH}")
