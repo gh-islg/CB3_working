@@ -1,6 +1,13 @@
 """Build the CB3 Environmental Conditions tract-level metrics table.
 It uses only local project data and writes:
-    data/clean/environment.csv
+    data/clean/environment_tract.csv
+    data/clean/environment_rodent_inspection_points.csv
+    data/clean/environment_tree_points.csv
+    data/clean/environment_nycha_building_points.csv
+    data/clean/cb3_hurricane_evacuation_zones.geojson
+    data/clean/environment_pm25_cb3.tif
+    data/clean/environment_pm25_grid.geojson
+    data/clean/environment_dec_registrations_points.csv
 """
 #%%
 from pathlib import Path
@@ -16,8 +23,13 @@ if str(_project_dir) not in sys.path:
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+import rasterio
+import rasterio.features
+import rasterio.mask
+from shapely.geometry import shape
 
 from src.cb3_utils import (
+    add_polygon_centroids,
     assign_points_to_cb3_tract,
     load_cb3_tract_universe,
 )
@@ -27,9 +39,18 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 RAW_DIR = PROJECT_DIR / "data" / "raw" / "Environment"
 GEOGRAPHY_DIR = PROJECT_DIR / "data" / "raw" / "Geography"
 RELATIONSHIP_DIR = GEOGRAPHY_DIR / "GeographicRelationshipFiles"
+HOUSING_RAW_DIR = PROJECT_DIR / "data" / "raw" / "Housing and Affordability"
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
-OUTPUT_PATH = CLEAN_DIR / "environment.csv"
+OUTPUT_PATH = CLEAN_DIR / "environment_tract.csv"
 LOG_PATH = CLEAN_DIR / "environment_log.txt"
+RODENT_INSPECTION_POINTS_PATH = CLEAN_DIR / "environment_rodent_inspection_points.csv"
+TREE_POINTS_PATH = CLEAN_DIR / "environment_tree_points.csv"
+NYCHA_BUILDING_POINTS_PATH = CLEAN_DIR / "environment_nycha_building_points.csv"
+PM25_RASTER_PATH = RAW_DIR / "AnnAvg_1_16_300m" / "aa16_pm300m"
+PM25_OUTPUT_PATH = CLEAN_DIR / "environment_pm25_cb3.tif"
+PM25_GRID_OUTPUT_PATH = CLEAN_DIR / "environment_pm25_grid.geojson"
+DEC_REGISTRATIONS_PATH = RAW_DIR / "Air_Facility_Registrations.geojson"
+DEC_REGISTRATIONS_POINTS_PATH = CLEAN_DIR / "environment_dec_registrations_points.csv"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 #%%
 
@@ -46,6 +67,37 @@ def _assign(frame, lon_col, lat_col, source_tract_col=None):
     return assign_points_to_cb3_tract(
         frame, lon_col, lat_col, cb3_tract_geometry, CB3_TRACT_CODES, source_tract_col
     )
+
+
+def build_building_points(frame, bbl_col, address_col, lon_col, lat_col, value_cols):
+    """Aggregate point-event records (e.g. inspections) to one row per
+    building (BBL) with summed metric counts and native coordinates.
+
+    Records missing a BBL are dropped from the building-level export (they
+    still contribute to the tract-level counts computed separately), since
+    there is no reliable building key to group them on.
+    """
+    with_bbl = frame[
+        frame[bbl_col].notna()
+        & frame[lat_col].notna()
+        & frame[lon_col].notna()
+        & frame["GEOID"].isin(CB3_GEOIDS)
+    ].copy()
+    with_bbl[bbl_col] = with_bbl[bbl_col].astype("int64")
+    points = (
+        with_bbl.groupby(bbl_col, as_index=False)
+        .agg(
+            **{
+                "GEOID": ("GEOID", "first"),
+                "address": (address_col, "first"),
+                "longitude": (lon_col, "first"),
+                "latitude": (lat_col, "first"),
+                **{col: (col, "sum") for col in value_cols},
+            }
+        )
+        .rename(columns={bbl_col: "bbl"})
+    )
+    return points
 #%%
 
 
@@ -82,32 +134,7 @@ ej_area_metrics["ej_area_flag"] = (
     ej_area_metrics["GEOID2010"].isin(designated_2010_geoids).astype(int)
 )
 ej_area_metrics = ej_area_metrics[["GEOID", "ej_area_flag"]]
-
 #%%
-# Rodent activity (311 service requests)
-
-# File is pre-filtered to CB3 rodent complaints but lacks a Census Tract column,
-# so assign each record to a tract by spatially joining its coordinates.
-rodent_311 = pd.read_csv(
-    RAW_DIR / "311_Service_Requests_from_2020_to_Present_20260428.csv",
-    low_memory=False,
-)
-rodent_311 = rodent_311[
-    rodent_311["Borough"].eq("MANHATTAN")
-    & rodent_311["Community Board"].eq("03 MANHATTAN")
-    & rodent_311["Problem (formerly Complaint Type)"].eq("Rodent")
-].copy()
-rodent_311["GEOID"] = _assign(rodent_311, "Longitude", "Latitude")
-rodent_311_unallocated_count = int(rodent_311["GEOID"].isna().sum())
-rodent_311_mapped = rodent_311[rodent_311["GEOID"].isin(CB3_GEOIDS)].copy()
-
-rodent_311_metrics = (
-    rodent_311_mapped.assign(rodent_311_calls=1)
-    .groupby("GEOID", as_index=False)["rodent_311_calls"]
-    .sum()
-)
-#%%
-
 
 # Rodent inspections (DOHMH)
 
@@ -120,73 +147,217 @@ rodent_insp = pd.read_csv(
     RAW_DIR / "Rodent_Inspection_20260428.csv",
     low_memory=False,
 )
+rodent_insp["INSPECTION_DATE"] = pd.to_datetime(
+    rodent_insp["INSPECTION_DATE"], format="%m/%d/%Y %I:%M:%S %p"
+)
 rodent_insp_active = rodent_insp[rodent_insp["RESULT"].isin(ACTIVE_RODENT_RESULTS)].copy()
+
+# Restrict to the latest 5 years of data (relative to the most recent
+# inspection in the file) instead of the full 2015-2026 history (one rogue 2002), so the
+# metric reflects recent conditions rather than two decades of accumulation.
+rodent_insp_latest_date = rodent_insp_active["INSPECTION_DATE"].max()
+rodent_insp_cutoff_date = rodent_insp_latest_date - pd.DateOffset(years=5)
+rodent_insp_active = rodent_insp_active[
+    rodent_insp_active["INSPECTION_DATE"] >= rodent_insp_cutoff_date
+].copy()
+# spatial join on coordinates via assign_points_to_cb3_tract()
 rodent_insp_active["GEOID"] = _assign(
     rodent_insp_active, "LONGITUDE", "LATITUDE", "CENSUS TRACT"
 )
 rodent_insp_unallocated_count = int(rodent_insp_active["GEOID"].isna().sum())
 rodent_insp_mapped = rodent_insp_active[rodent_insp_active["GEOID"].isin(CB3_GEOIDS)].copy()
+rodent_insp_mapped["rodent_active_inspections"] = 1
 
 rodent_insp_metrics = (
-    rodent_insp_mapped.assign(rodent_active_inspections=1)
-    .groupby("GEOID", as_index=False)["rodent_active_inspections"]
+    rodent_insp_mapped.groupby("GEOID", as_index=False)["rodent_active_inspections"]
     .sum()
 )
+
+# Building-level export for point/bubble maps: one row per building with a
+# confirmed-activity inspection, keeping its own coordinates rather than
+# collapsing to the tract centroid.
+rodent_insp_points = build_building_points(
+    rodent_insp_mapped, "BBL", "LOCATION", "LONGITUDE", "LATITUDE",
+    ["rodent_active_inspections"],
+)
+rodent_insp_points.to_csv(RODENT_INSPECTION_POINTS_PATH, index=False)
+print(f"Wrote {len(rodent_insp_points)} rodent inspection building points to {RODENT_INSPECTION_POINTS_PATH}")
 #%%
 
+# Street trees (NYC Parks 2015 TreesCount census)
 
-# Indoor environmental complaints (DOHMH)
-
-# Has both coordinates and a Census Tract field; coordinates are the primary
-# assignment method and the source tract is used only as a fallback.
-# Note: the staged file here is the 20260420 vintage; the Housing domain uses
-# the 20260428 vintage (15 additional records). Flag if vintages are reconciled.
-indoor = pd.read_csv(
-    RAW_DIR / "DOHMH_Indoor_Environmental_Complaints_20260420.csv",
+# File is citywide; filter to CB3 Manhattan (community board 103) and keep
+# only Alive trees, since Dead/Stump records have no health rating to color
+# by. Coordinates are complete for the CB3 subset, so no source-tract
+# fallback is needed for the spatial join.
+trees = pd.read_csv(
+    RAW_DIR / "2015_Street_Tree_Census_-_Tree_Data_20260630.csv",
     low_memory=False,
 )
-indoor = indoor[
-    indoor["Incident_Address_Borough"].str.upper().eq("MANHATTAN")
-    & indoor["Community Board"].eq(3)
-    & indoor["Deleted"].ne("Yes")
+trees_cb3 = trees[
+    trees["community board"].eq(103)
+    & trees["borough"].eq("Manhattan")
+    & trees["status"].eq("Alive")
 ].copy()
-indoor["GEOID"] = _assign(indoor, "Longitude", "Latitude", "Census Tract")
-indoor_unallocated_count = int(indoor["GEOID"].isna().sum())
-indoor_mapped = indoor[indoor["GEOID"].isin(CB3_GEOIDS)].copy()
+trees_cb3["GEOID"] = _assign(trees_cb3, "longitude", "latitude")
+tree_unallocated_count = int(trees_cb3["GEOID"].isna().sum())
+trees_cb3_mapped = trees_cb3[trees_cb3["GEOID"].isin(CB3_GEOIDS)].copy()
 
-indoor_metrics = (
-    indoor_mapped.assign(
-        indoor_environmental_complaints=1,
-        indoor_air_quality_complaints=indoor_mapped["Complaint_Type_311"]
-        .str.upper()
-        .eq("INDOOR AIR QUALITY")
-        .astype(int),
-        mold_complaints=indoor_mapped["Complaint_Type_311"]
-        .str.upper()
-        .eq("MOLD")
-        .astype(int),
-        asbestos_complaints=indoor_mapped["Complaint_Type_311"]
-        .str.upper()
-        .eq("ASBESTOS")
-        .astype(int),
-        indoor_sewage_complaints=indoor_mapped["Complaint_Type_311"]
-        .str.upper()
-        .eq("INDOOR SEWAGE")
-        .astype(int),
+tree_points = trees_cb3_mapped[
+    ["tree_id", "address", "GEOID", "latitude", "longitude", "health", "spc_common"]
+].copy()
+tree_points.to_csv(TREE_POINTS_PATH, index=False)
+print(f"Wrote {len(tree_points)} alive street tree points to {TREE_POINTS_PATH}")
+#%%
+
+# NYCHA residential buildings (for the hurricane evacuation zone map)
+
+# Sourced from the Housing & Affordability domain's NYCHA code-violations file
+# (the only local file with building-level NYCHA coordinates), since there is
+# no dedicated NYCHA development roster in the raw data. Each violation is
+# tied to a specific residential building, so deduplicating on BBL gives one
+# point per actual NYCHA residential building rather than a development's
+# non-residential amenity sites (community centers, senior centers, etc. —
+# see NYCHA_Facilities_and_Service_Centers, which is not building-level).
+nycha = pd.read_csv(
+    HOUSING_RAW_DIR / "Housing_Maintenance_Code_Violations_NYCHA_properties_20260420.csv",
+    low_memory=False,
+)
+nycha = nycha[
+    nycha["Primary Borough Name"].eq("MANHATTAN")
+    & nycha["Community Board"].eq(103)
+].copy()
+nycha["GEOID"] = _assign(nycha, "Longitude", "Latitude", "Census Tract (2020)")
+nycha_unallocated_count = int(nycha["GEOID"].isna().sum())
+nycha_mapped = nycha[nycha["GEOID"].isin(CB3_GEOIDS)].copy()
+nycha_mapped["address"] = (
+    nycha_mapped["Primary House Number"].astype(str).str.strip()
+    + " " + nycha_mapped["Primary Street Name"].astype(str).str.strip()
+)
+
+nycha_building_points = (
+    nycha_mapped.groupby("BBL", as_index=False)
+    .agg(
+        development_name=("Development Name", "first"),
+        address=("address", "first"),
+        GEOID=("GEOID", "first"),
+        latitude=("Latitude", "first"),
+        longitude=("Longitude", "first"),
     )
-    .groupby("GEOID", as_index=False)[
-        [
-            "indoor_environmental_complaints",
-            "indoor_air_quality_complaints",
-            "mold_complaints",
-            "asbestos_complaints",
-            "indoor_sewage_complaints",
-        ]
-    ]
-    .sum()
+)
+nycha_building_points.to_csv(NYCHA_BUILDING_POINTS_PATH, index=False)
+print(f"Wrote {len(nycha_building_points)} NYCHA residential building points to {NYCHA_BUILDING_POINTS_PATH}")
+#%%
+
+# Hurricane Evacuation Zones (NYC OEM)
+
+# Citywide file covering the whole coastline (7MB, hundreds of polygon parts
+# per zone), so clip to the CB3 tract boundary here rather than embedding the
+# full citywide geometry in every map that uses it.
+evac_zones = gpd.read_file(RAW_DIR / "Hurricane_Evacuation_Zones_20260708.geojson")
+evac_zones = evac_zones.rename(columns={"hurricane_": "evacuation_zone"})[
+    ["evacuation_zone", "geometry"]
+]
+evac_zones["evacuation_zone"] = evac_zones["evacuation_zone"].astype(str)
+
+cb3_boundary = cb3_tract_geometry.to_crs("EPSG:2263").geometry.union_all()
+evac_zones_proj = evac_zones.to_crs("EPSG:2263")
+evac_zones_proj["geometry"] = evac_zones_proj.geometry.intersection(cb3_boundary)
+evac_zones_clipped = evac_zones_proj[~evac_zones_proj.geometry.is_empty].to_crs("EPSG:4326")
+
+EVAC_ZONES_OUTPUT_PATH = CLEAN_DIR / "cb3_hurricane_evacuation_zones.geojson"
+evac_zones_clipped.to_file(EVAC_ZONES_OUTPUT_PATH, driver="GeoJSON")
+print(
+    f"Wrote {len(evac_zones_clipped)} CB3-clipped evacuation zones to {EVAC_ZONES_OUTPUT_PATH}"
 )
 #%%
 
+# Fine particulate matter (PM2.5) — NYCCAS annual average, Dec 2023-Dec 2024
+
+# NYCCAS (NYC Community Air Survey, DOHMH) publishes a citywide 300m-resolution
+# raster of *modeled* (Land Use Regression) annual average PM2.5, not direct
+# monitoring — DOHMH's own data dictionary states it "cannot be compared to
+# short term localized monitoring or monitoring done for regulatory purposes."
+# Use it only as a relative surface (which blocks are higher/lower), not an
+# absolute regulatory reading. aa16_pm300m is the most recent of 16 available
+# years (Dec 2023-Dec 2024); the raster's native nodata sentinel marks cells
+# outside NYC's modeled extent and is excluded from the clip.
+with rasterio.open(PM25_RASTER_PATH) as pm25_src:
+    cb3_boundary_pm25_crs = [
+        cb3_tract_geometry.to_crs(pm25_src.crs).geometry.union_all()
+    ]
+    pm25_clipped, pm25_transform = rasterio.mask.mask(
+        pm25_src, cb3_boundary_pm25_crs, crop=True, nodata=pm25_src.nodata
+    )
+    pm25_meta = pm25_src.meta.copy()
+
+pm25_meta.update(
+    driver="GTiff",
+    height=pm25_clipped.shape[1],
+    width=pm25_clipped.shape[2],
+    transform=pm25_transform, # pm25_transform is the affine transform for the clipped raster — the small set of numbers that tells you where in real-world coordinates pixel (0,0) sits, and how big each pixel i
+)
+with rasterio.open(PM25_OUTPUT_PATH, "w", **pm25_meta) as pm25_dst:
+    #two steps are separate on purpose: opening the file sets up its structure (size, coordinate system, nodata value), and .write() is what puts the actual numbers into it. Once this line runs, environment_pm25_cb3.tif exists as a real, complete raster file
+    pm25_dst.write(pm25_clipped)
+
+# band index [0] selects the single band from pm25_clipped's (band, row, col)
+# array shape, giving the 2D mask rasterio.features.shapes() below requires.
+pm25_valid_mask = pm25_clipped[0] != pm25_meta["nodata"]
+pm25_valid = pm25_clipped[0][pm25_valid_mask]
+print(
+    f"Wrote CB3-clipped PM2.5 raster ({pm25_valid.size} valid 300m cells, "
+    f"range {pm25_valid.min():.2f}-{pm25_valid.max():.2f} ug/m3) to {PM25_OUTPUT_PATH}"
+)
+
+# Vectorize the clipped raster into one square polygon per valid 300m cell, so
+# the PM2.5 grid can be mapped as a GeoJSON layer alongside the project's other
+# vector layers (Folium has no native raster styling/tooltips).
+pm25_shapes = rasterio.features.shapes( #This is the "raster → vector" conversion step.
+    pm25_clipped[0], 
+    mask=pm25_valid_mask, # skip no data pixels
+    transform=pm25_transform
+    #shapes() merges any group of touching pixels that have the exact same value into one combined polygon
+)
+pm25_grid = gpd.GeoDataFrame(
+    [{"pm25": value, "geometry": shape(geom)} for geom, value in pm25_shapes],
+    crs=pm25_meta["crs"],
+).to_crs("EPSG:4326")
+# Stable per-cell key so add_polygon_centroids() can look up each cell's
+# centroid for point/bubble maps, the same way it does for census tracts.
+pm25_grid.insert(0, "cell_id", range(len(pm25_grid)))
+pm25_grid.to_file(PM25_GRID_OUTPUT_PATH, driver="GeoJSON")
+print(f"Wrote {len(pm25_grid)} PM2.5 grid-cell polygons to {PM25_GRID_OUTPUT_PATH}")
+#%%
+
+# NYS DEC Air Facility Registrations (pollution point-source overlay)
+
+# NYSDEC issues air permits in three tiers by facility size: Title V (ATV,
+# largest), Air State Facility (ASF, mid-size), and Registrations (smallest,
+# facilities below half the major-source emissions threshold). ASF and Title V
+# were checked separately and found to have zero facilities within the CB3
+# tract boundary (Con Edison's East River Generating Station, a Title V
+# facility, sits ~150 feet from the boundary but just outside it), so only
+# the Registrations file is processed into a CB3 point layer here. Statewide
+# file; filter to points falling within the 31-tract CB3 union.
+dec_registrations = gpd.read_file(DEC_REGISTRATIONS_PATH)
+dec_registrations["longitude"] = dec_registrations.geometry.x
+dec_registrations["latitude"] = dec_registrations.geometry.y
+dec_registrations["GEOID"] = _assign(dec_registrations, "longitude", "latitude")
+dec_registrations_unallocated_count = int(dec_registrations["GEOID"].isna().sum())
+dec_registrations_mapped = dec_registrations[
+    dec_registrations["GEOID"].isin(CB3_GEOIDS)
+].copy()
+
+dec_registrations_points = dec_registrations_mapped[
+    ["DEC_ID", "FACILITY_NAME", "GEOID", "latitude", "longitude"]
+].rename(columns={"DEC_ID": "dec_id", "FACILITY_NAME": "facility_name"})
+dec_registrations_points.to_csv(DEC_REGISTRATIONS_POINTS_PATH, index=False)
+print(
+    f"Wrote {len(dec_registrations_points)} DEC air facility registration points "
+    f"to {DEC_REGISTRATIONS_POINTS_PATH}"
+)
+#%%
 
 # Sanitation cleanliness (DSNY scorecard — section level)
 
@@ -238,9 +409,7 @@ print(
 # zero for tracts with no matching records.
 metric_frames = [
     ej_area_metrics,
-    rodent_311_metrics,
-    rodent_insp_metrics,
-    indoor_metrics,
+    rodent_insp_metrics
 ]
 
 clean = tracts[
@@ -257,21 +426,8 @@ clean = tracts[
 for metric_frame in metric_frames:
     clean = clean.merge(metric_frame, on="GEOID", how="left", validate="one_to_one")
 
-count_columns = [
-    "rodent_311_calls",
-    "rodent_active_inspections",
-    "indoor_environmental_complaints",
-    "indoor_air_quality_complaints",
-    "mold_complaints",
-    "asbestos_complaints",
-    "indoor_sewage_complaints",
-]
+count_columns = ["rodent_active_inspections"]
 clean[count_columns] = clean[count_columns].fillna(0)
-
-# Compute East Village share of rodent calls for the flag note below.
-ev_calls = int(clean.loc[clean["nta_name"].eq("East Village"), "rodent_311_calls"].sum())
-total_calls = int(clean["rodent_311_calls"].sum())
-ev_share = f"{ev_calls / total_calls:.1%}" if total_calls > 0 else "n/a"
 
 # Write geography and data-availability notes to a sidecar log instead of
 # repeating identical text across all 31 rows.
@@ -287,22 +443,30 @@ log_lines = [
     "EJ Areas:              2010 GEOID10 crosswalked to 2020 tracts via "
     "nyc_2010to2020_split_census_tract_pop_proportion.xlsx; each 2020 tract "
     "uses its primary (largest population-proportion) 2010 source tract.",
-    f"Rodent 311 calls:      {rodent_311_unallocated_count} CB3-labelled records not allocated to a tract",
-    f"Rodent inspections:    {rodent_insp_unallocated_count} active-result records not allocated to a tract",
-    f"Indoor env complaints: {indoor_unallocated_count} CB3-labelled records not allocated to a tract",
-    "",
-    "=== Flag for Review ===",
-    f"Rodent 311 NTA share:  Tract-level aggregation gives East Village {ev_share} of "
-    "mapped CB3 rodent calls, vs. the concept doc's cited ~48%. Re-check before "
-    "using the NTA-level disparity narrative with this build.",
+    f"Rodent inspections:    {rodent_insp_unallocated_count} active-result records not allocated to a tract; "
+    f"restricted to latest 5 years ({rodent_insp_cutoff_date.strftime('%Y-%m-%d')} to "
+    f"{rodent_insp_latest_date.strftime('%Y-%m-%d')})",
+    f"Street trees:          {tree_unallocated_count} Alive CB3-board records not allocated to a tract",
+    f"NYCHA buildings:       {nycha_unallocated_count} MN03 NYCHA violation records not allocated to a tract; "
+    f"{len(nycha_building_points)} unique residential buildings (by BBL) from violation records",
     "",
     "=== Data Availability ===",
     f"Sanitation cleanliness: Reported at cleaning section level (MN031-MN034). "
     f"Averaged over {scorecard_n_months} non-null months "
     f"({scorecard_cutoff.strftime('%Y-%m')} to {latest_scorecard_date.strftime('%Y-%m')}). "
-    f"Written to environment_sections.csv; not included in tract-level environment.csv.",
-    "Heat Vulnerability Index: reported by ZIP/ZCTA, not census tract. Deferred "
-    "per request; not yet included.",
+    f"Written to environment_sections.csv; not included in tract-level {OUTPUT_PATH.name}.",
+    f"PM2.5 (NYCCAS):         Modeled (Land Use Regression) annual average, Dec 2023-Dec 2024, "
+    f"300m resolution raster clipped to the CB3 tract boundary. DOHMH states this surface is "
+    f"not comparable to regulatory or short-term localized monitoring. "
+    f"{pm25_valid.size} valid cells, {pm25_valid.min():.2f}-{pm25_valid.max():.2f} ug/m3. "
+    f"Written to {PM25_OUTPUT_PATH.name} (raster); not yet joined to tract-level {OUTPUT_PATH.name}.",
+    f"DEC air permits:        Checked all three NYSDEC permit tiers (Title V, ASF, Registrations) "
+    f"against the CB3 boundary. Only Registrations (smallest tier) has facilities within CB3 "
+    f"({len(dec_registrations_points)} found; {dec_registrations_unallocated_count} statewide "
+    f"records not allocated to a tract, expected since most are outside CB3). ASF and Title V "
+    f"have zero facilities within CB3; Con Edison's East River Generating Station (Title V) sits "
+    f"~150 feet from the CB3 boundary but just outside it. Written to "
+    f"{DEC_REGISTRATIONS_POINTS_PATH.name}; not included in tract-level {OUTPUT_PATH.name}.",
 ]
 LOG_PATH.write_text("\n".join(log_lines), encoding="utf-8")
 print(f"Wrote build log to {LOG_PATH}")
@@ -312,6 +476,14 @@ clean = clean.sort_values("GEOID").reset_index(drop=True)
 assert len(clean) == 31
 assert clean["GEOID"].is_unique
 assert clean["GEOID"].str.fullmatch(r"\d{11}").all()
+
+# Attach each tract's polygon centroid so tract-level metrics (e.g. EJ Area
+# status) can still be placed as a single point on point/bubble map layers,
+# in the absence of building-level coordinates.
+clean = add_polygon_centroids(
+    clean, cb3_tract_geometry, "GEOID",
+    lat_col="tract_centroid_latitude", lon_col="tract_centroid_longitude",
+)
 
 clean.to_csv(OUTPUT_PATH, index=False)
 print(f"Wrote {len(clean)} rows and {len(clean.columns)} columns to {OUTPUT_PATH}")
@@ -324,9 +496,10 @@ validation = pd.Series(
         "tract_rows": len(clean),
         "unique_geoids": clean["GEOID"].nunique(),
         "ej_area_tracts": clean["ej_area_flag"].sum(),
-        "mapped_rodent_311_calls": clean["rodent_311_calls"].sum(),
         "mapped_rodent_active_inspections": clean["rodent_active_inspections"].sum(),
-        "mapped_indoor_env_complaints": clean["indoor_environmental_complaints"].sum(),
+        "mapped_alive_trees": len(tree_points),
+        "nycha_residential_buildings": len(nycha_building_points),
+        "cb3_evacuation_zone_parts": len(evac_zones_clipped),
     }
 )
 print(validation.to_frame("value").to_string())
