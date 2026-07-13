@@ -670,3 +670,111 @@ lep_household_share:
     - "#f03b20"
     - "#bd0026"
   source: ACS 2020-2024 5-year estimates, table C16002
+
+chinese_limited_english_share:
+  domain: language
+  short_label: Chinese LEP share
+  label: Share of residents age 5+ who speak Chinese and speak English less than very well
+  description: >
+    Share of residents age 5 and older who speak Chinese, including Mandarin
+    and Cantonese, and report speaking English less than very well.
+  unit: "%"
+  source: 2020–2024 ACS B16001
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: chinese_limited_english_share.html
+
+spanish_limited_english_share:
+  domain: language
+  short_label: Spanish LEP share
+  label: Share of residents age 5+ who speak Spanish and speak English less than very well
+  description: >
+    Share of residents age 5 and older who speak Spanish and report speaking
+    English less than very well.
+  unit: "%"
+  source: 2020–2024 ACS B16001
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: spanish_limited_english_share.html
+
+tagalog_limited_english_share:
+  domain: language
+  short_label: Tagalog LEP share
+  label: Share of residents age 5+ who speak Tagalog and speak English less than very well
+  unit: "%"
+  source: 2020–2024 ACS B16001
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: tagalog_limited_english_share.html
+
+korean_limited_english_share:
+  domain: language
+  short_label: Korean LEP share
+  label: Share of residents age 5+ who speak Korean and speak English less than very well
+  unit: "%"
+  source: 2020–2024 ACS B16001
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: korean_limited_english_share.html
+
+french_haitian_cajun_limited_english_share:
+  domain: language
+  short_label: French/Haitian/Cajun LEP share
+  label: Share of residents age 5+ who speak French, Haitian, or Cajun and speak English less than very well
+  description: >
+    ACS B16001 does not isolate French Creole at the tract level; this metric
+    uses the closest available B16001 category, French, Haitian, or Cajun.
+  unit: "%"
+  source: 2020–2024 ACS B16001
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: french_haitian_cajun_limited_english_share.html
+
+arabic_limited_english_share:
+  domain: language
+  short_label: Arabic LEP share
+  label: Share of residents age 5+ who speak Arabic and speak English less than very well
+  unit: "%"
+  source: 2020–2024 ACS B16001
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: arabic_limited_english_share.html
+
+russian_slavic_limited_english_share:
+  domain: language
+  short_label: Russian/Slavic LEP share
+  label: Share of residents age 5+ who speak Russian, Polish, or other Slavic languages and speak English less than very well
+  description: >
+    ACS B16001 does not isolate Russian at the tract level; this metric uses
+    the closest available B16001 category, Russian, Polish, or other Slavic languages.
+  unit: "%"
+  source: 2020–2024 ACS B16001
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: russian_slavic_limited_english_share.html
+
+vietnamese_limited_english_share:
+  domain: language
+  short_label: Vietnamese LEP share
+  label: Share of residents age 5+ who speak Vietnamese and speak English less than very well
+  unit: "%"
+  source: 2020–2024 ACS B16001
+  geography: Census tract
+  higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: vietnamese_limited_english_share.html

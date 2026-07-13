@@ -1,627 +1,792 @@
 ---
-title: ""
+title: "CB3 Equity Report — Language Maps"
 format:
   html:
-    self-contained: true
-    toc: false
-    page-layout: full
+    toc: true
+    code-fold: true
 execute:
-  echo: false
+  echo: true
   warning: false
   message: false
 jupyter: python3
 ---
 
+## Purpose
+
+Render Language-domain maps with the same user-facing pattern as the Health-domain maps:
+
+- right-side radio buttons for demographic tract-color background layers;
+- right-side checkboxes for Language metric bubble overlays;
+- exact Language metric values on bubble hover.
+
+This file uses `map_utils.py` for the shared base map and title, but creates a custom always-visible layer panel because the default Folium layer control was not showing reliably in this branch.
+
 ```{python}
 from pathlib import Path
+import html
 import json
+import sys
 
+import branca.colormap as cm
 import folium
 import geopandas as gpd
+import numpy as np
 import pandas as pd
-from IPython.display import display
 
+for candidate in [Path.cwd(), *Path.cwd().parents]:
+    if (candidate / "src" / "map_utils.py").exists():
+        sys.path.insert(0, str(candidate))
+        break
 
-def find_repo_root() -> Path:
-    """Locate the repository root from the current render directory."""
-    current_path = Path.cwd().resolve()
-
-    for candidate in [
-        current_path,
-        *current_path.parents,
-    ]:
-        if (
-            (candidate / "data").exists()
-            and (candidate / "scripts").exists()
-        ):
-            return candidate
-
-    raise FileNotFoundError(
-        "Could not locate the repository root."
-    )
-
-
-REPO_ROOT = find_repo_root()
-
-CLEAN_FILE = (
-    REPO_ROOT
-    / "data"
-    / "clean"
-    / "language.csv"
-)
-
-BOUNDARY_FILE = (
-    REPO_ROOT
-    / "data"
-    / "raw"
-    / "Geography"
-    / "cb3_2020_census_tracts.geojson"
-)
-
-MAP_OUTPUT_DIR = (
-    REPO_ROOT
-    / "docs"
-    / "maps"
-    / "language"
-)
-
-MAP_OUTPUT_DIR.mkdir(
-    parents=True,
-    exist_ok=True,
-)
+from src.cb3_utils import load_cb3_tract_universe
+from src.map_utils import find_project_dir, make_base_map, add_map_title
 ```
 
 ```{python}
-def prepare_geoid(
-    frame,
-):
-    """Normalize an existing tract GEOID column."""
-    result = frame.copy()
+PROJECT_DIR = find_project_dir()
+CLEAN_DIR = PROJECT_DIR / "data" / "clean"
+MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "language"
+MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    candidates = [
-        "GEOID",
-        "geoid",
-        "GeoID",
-        "GEO_ID",
-        "tract_geoid",
-        "tract_fips",
-    ]
+LANGUAGE_PATH = CLEAN_DIR / "language.csv"
 
-    geoid_column = next(
-        (
-            column
-            for column in candidates
-            if column in result.columns
-        ),
-        None,
-    )
+BASELINE_CANDIDATES = [
+    CLEAN_DIR / "tract_baseline_profile_clean.csv",
+    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
+    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk_clean.csv",
+    CLEAN_DIR / "cb3_tract_baseline_profile.csv",
+    CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv",
+    CLEAN_DIR / "baseline" / "tract_baseline_profile_clean.csv",
+    CLEAN_DIR / "baseline" / "tract_baseline_profile_partial_before_crosswalk.csv",
+]
+```
 
-    if geoid_column is None:
-        raise ValueError(
-            "Could not find GEOID in columns: "
-            f"{result.columns.tolist()}"
+## Load data
+
+```{python}
+LANGUAGE_METADATA = {
+    "asian_pacific_limited_english_household_share": {
+        "short_label": "Asian/Pacific Island language LEP households",
+        "label": "Share of households that speak Asian or Pacific Island languages and have limited English-speaking status",
+        "filename": "asian_pacific_limited_english_household_share.html",
+        "count_col": "asian_pacific_limited_english_households",
+        "denominator_col": "households_language_universe",
+        "count_label": "Asian/Pacific Island language LEP households",
+        "denominator_label": "Household universe",
+        "unit": "%",
+    },
+    "spanish_limited_english_household_share": {
+        "short_label": "Spanish-speaking LEP households",
+        "label": "Share of households that speak Spanish and have limited English-speaking status",
+        "filename": "spanish_limited_english_household_share.html",
+        "count_col": "spanish_limited_english_households",
+        "denominator_col": "households_language_universe",
+        "count_label": "Spanish-speaking LEP households",
+        "denominator_label": "Household universe",
+        "unit": "%",
+    },
+    "lep_household_share": {
+        "short_label": "Limited-English-proficient households",
+        "label": "Share of households with limited English-speaking status",
+        "filename": "aggregate_limited_english_household_share.html",
+        "count_col": "lep_households",
+        "denominator_col": "households_language_universe",
+        "count_label": "LEP households",
+        "denominator_label": "Household universe",
+        "unit": "%",
+    },
+    "other_indo_european_limited_english_household_share": {
+        "short_label": "Other Indo-European language LEP households",
+        "label": "Share of households that speak other Indo-European languages and have limited English-speaking status",
+        "filename": "other_indo_european_limited_english_household_share.html",
+        "count_col": "other_indo_european_limited_english_households",
+        "denominator_col": "households_language_universe",
+        "count_label": "Other Indo-European language LEP households",
+        "denominator_label": "Household universe",
+        "unit": "%",
+    },
+    "other_languages_limited_english_household_share": {
+        "short_label": "Other language LEP households",
+        "label": "Share of households that speak other languages and have limited English-speaking status",
+        "filename": "other_languages_limited_english_household_share.html",
+        "count_col": "other_languages_limited_english_households",
+        "denominator_col": "households_language_universe",
+        "count_label": "Other-language LEP households",
+        "denominator_label": "Household universe",
+        "unit": "%",
+    },
+}
+
+DEMOGRAPHIC_METADATA = {
+    "median_household_income": {"short_label": "Median household income", "label": "Median household income", "unit": "$"},
+    "age_0_to_19_share": {"short_label": "Age 0-19", "label": "Share of residents age 0 to 19", "unit": "%"},
+    "age_20_to_64_share": {"short_label": "Age 20-64", "label": "Share of residents age 20 to 64", "unit": "%"},
+    "age_65_plus_share": {"short_label": "Age 65+", "label": "Share of residents age 65 or older", "unit": "%"},
+    "white_non_hispanic_share": {"short_label": "White non-Hispanic share", "label": "Share of residents who are White non-Hispanic", "unit": "%"},
+    "black_non_hispanic_share": {"short_label": "Black non-Hispanic share", "label": "Share of residents who are Black non-Hispanic", "unit": "%"},
+    "asian_non_hispanic_share": {"short_label": "Asian non-Hispanic share", "label": "Share of residents who are Asian non-Hispanic", "unit": "%"},
+    "hispanic_share": {"short_label": "Hispanic share", "label": "Share of residents who are Hispanic or Latino", "unit": "%"},
+    "poverty_rate": {"short_label": "Poverty rate", "label": "Share of residents below poverty", "unit": "%"},
+    "lep_household_share": {"short_label": "Limited-English-proficient households", "label": "Share of households with limited English-speaking status", "unit": "%"},
+}
+
+LANGUAGE_METRICS = list(LANGUAGE_METADATA.keys())
+
+DEMOGRAPHIC_LAYER_CANDIDATES = [
+    "median_household_income",
+    "age_0_to_19_share",
+    "age_20_to_64_share",
+    "age_65_plus_share",
+    "white_non_hispanic_share",
+    "black_non_hispanic_share",
+    "asian_non_hispanic_share",
+    "hispanic_share",
+    "poverty_rate",
+    "lep_household_share",
+]
+```
+
+```{python}
+def normalize_geoid(series):
+    return series.astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(11)
+
+
+def add_geoid(df):
+    if "GEOID" in df.columns:
+        df["GEOID"] = normalize_geoid(df["GEOID"])
+        return df
+    if "geoid" in df.columns:
+        df = df.rename(columns={"geoid": "GEOID"})
+        df["GEOID"] = normalize_geoid(df["GEOID"])
+        return df
+    if "GEOID20" in df.columns:
+        df = df.rename(columns={"GEOID20": "GEOID"})
+        df["GEOID"] = normalize_geoid(df["GEOID"])
+        return df
+    if {"state", "county", "tract"}.issubset(df.columns):
+        df["GEOID"] = (
+            df["state"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(2)
+            + df["county"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(3)
+            + df["tract"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(6)
         )
-
-    if geoid_column != "GEOID":
-        result = result.rename(
-            columns={
-                geoid_column: "GEOID",
-            }
-        )
-
-    result["GEOID"] = (
-        result["GEOID"]
-        .astype(str)
-        .str.extract(
-            r"(\d{11})"
-        )[0]
-        .str.zfill(11)
-    )
-
-    return result
+        return df
+    raise KeyError(f"Could not create GEOID from columns: {list(df.columns)}")
 
 
-def assign_quintiles(
-    series,
-):
-    """Assign Q1 through Q5 using ranked values."""
-    numeric = pd.to_numeric(
-        series,
-        errors="coerce",
-    )
-
-    output = pd.Series(
-        pd.NA,
-        index=series.index,
-        dtype="object",
-    )
-
-    valid = numeric.notna()
-
-    if valid.sum() < 5:
-        raise ValueError(
-            "At least five valid values are required "
-            "to calculate quintiles."
-        )
-
-    ranked = numeric.loc[
-        valid
-    ].rank(
-        method="first"
-    )
-
-    output.loc[
-        valid
-    ] = pd.qcut(
-        ranked,
-        q=5,
-        labels=[
-            "Q1 — Lowest",
-            "Q2",
-            "Q3",
-            "Q4",
-            "Q5 — Highest",
-        ],
-    ).astype(str)
-
-    return output
-
-
-def add_map_title(
-    map_object,
-    title,
-):
-    """Add a centered title inside the interactive map."""
-    title_html = f"""
-    <div style="
-        position: fixed;
-        top: 12px;
-        left: 50%;
-        transform: translateX(-50%);
-        z-index: 9999;
-        background: rgba(255, 255, 255, 0.94);
-        padding: 9px 16px;
-        border: 1px solid #bdbdbd;
-        border-radius: 4px;
-        box-shadow: 0 1px 5px rgba(0, 0, 0, 0.22);
-        font-family: Arial, sans-serif;
-        font-size: 18px;
-        font-weight: 700;
-        color: #222222;
-        white-space: nowrap;
-    ">
-        {title}
-    </div>
-    """
-
-    map_object.get_root().html.add_child(
-        folium.Element(
-            title_html
-        )
-    )
-
-
-def add_quintile_legend(
-    map_object,
-    palette,
-):
-    """Add a visible Q1-Q5 legend."""
-    palette_colors = {
-        "YlOrRd": [
-            "#ffffb2",
-            "#fecc5c",
-            "#fd8d3c",
-            "#f03b20",
-            "#bd0026",
-        ],
-        "PuRd": [
-            "#f1eef6",
-            "#d7b5d8",
-            "#df65b0",
-            "#ce1256",
-            "#91003f",
-        ],
-    }
-
-    if palette not in palette_colors:
-        raise ValueError(
-            f"Unsupported palette: {palette}"
-        )
-
-    labels = [
-        "Q1 — Lowest",
-        "Q2",
-        "Q3",
-        "Q4",
-        "Q5 — Highest",
-    ]
-
-    legend_rows = ""
-
-    for color, label in zip(
-        palette_colors[palette],
-        labels,
-    ):
-        legend_rows += f"""
-        <div style="
-            display: flex;
-            align-items: center;
-            margin-bottom: 4px;
-        ">
-            <span style="
-                display: inline-block;
-                width: 15px;
-                height: 15px;
-                margin-right: 7px;
-                background: {color};
-                border: 1px solid #777777;
-            "></span>
-            <span>{label}</span>
-        </div>
-        """
-
-    legend_html = f"""
-    <div style="
-        position: fixed;
-        bottom: 25px;
-        right: 20px;
-        z-index: 9999;
-        background: white;
-        padding: 10px 12px;
-        border: 1px solid #999999;
-        border-radius: 4px;
-        font-family: Arial, sans-serif;
-        font-size: 12px;
-        color: #222222;
-        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
-    ">
-        <div style="
-            font-weight: 700;
-            margin-bottom: 7px;
-        ">
-            Quintile
-        </div>
-        {legend_rows}
-    </div>
-    """
-
-    map_object.get_root().html.add_child(
-        folium.Element(
-            legend_html
-        )
-    )
-
-
-def make_quintile_map(
-    gdf,
-    metric,
-    title,
-    value_alias,
-    palette,
-    output_filename,
-):
-    """Create and save one tract-level quintile map."""
-    plot_gdf = (
-        gdf.copy()
-        .to_crs(4326)
-    )
-
-    if metric not in plot_gdf.columns:
-        raise ValueError(
-            f"Missing metric column: {metric}"
-        )
-
-    plot_gdf[metric] = pd.to_numeric(
-        plot_gdf[metric],
-        errors="coerce",
-    )
-
-    if plot_gdf[metric].dropna().empty:
-        raise ValueError(
-            f"{metric} has no valid values."
-        )
-
-    quintile_column = (
-        f"{metric}_quintile"
-    )
-
-    quintile_code_column = (
-        f"{metric}_quintile_code"
-    )
-
-    plot_gdf[
-        quintile_column
-    ] = assign_quintiles(
-        plot_gdf[metric]
-    )
-
-    quintile_code_map = {
-        "Q1 — Lowest": 1,
-        "Q2": 2,
-        "Q3": 3,
-        "Q4": 4,
-        "Q5 — Highest": 5,
-    }
-
-    plot_gdf[
-        quintile_code_column
-    ] = (
-        plot_gdf[
-            quintile_column
-        ]
-        .map(
-            quintile_code_map
-        )
-        .astype(float)
-    )
-
-    tooltip_fields = [
-        "GEOID",
-    ]
-
-    tooltip_aliases = [
-        "Census tract GEOID",
-    ]
-
-    if "NAME" in plot_gdf.columns:
-        tooltip_fields.append(
-            "NAME"
-        )
-
-        tooltip_aliases.append(
-            "Geography"
-        )
-
-    tooltip_fields.extend(
-        [
-            metric,
-            quintile_column,
-        ]
-    )
-
-    tooltip_aliases.extend(
-        [
-            value_alias,
-            "Quintile",
-        ]
-    )
-
-    keep_columns = list(
-        dict.fromkeys(
-            [
-                "GEOID",
-                metric,
-                quintile_column,
-                quintile_code_column,
-                *tooltip_fields,
-                "geometry",
-            ]
-        )
-    )
-
-    plot_gdf = plot_gdf[
-        [
-            column
-            for column in keep_columns
-            if column in plot_gdf.columns
-        ]
-    ].copy()
-
-    for column in plot_gdf.columns:
-        if column == "geometry":
+def load_demographic_baseline():
+    for path in BASELINE_CANDIDATES:
+        if not path.exists():
             continue
 
-        if pd.api.types.is_datetime64_any_dtype(
-            plot_gdf[column]
-        ):
-            plot_gdf[column] = (
-                plot_gdf[column]
-                .astype(str)
-            )
+        df = pd.read_csv(path, dtype={"GEOID": "string", "geoid": "string", "GEOID20": "string"})
+        df = add_geoid(df)
+        available = [col for col in DEMOGRAPHIC_LAYER_CANDIDATES if col in df.columns]
 
-        elif (
-            plot_gdf[column].dtype
-            == "object"
-        ):
-            plot_gdf[column] = (
-                plot_gdf[column]
-                .map(
-                    lambda value: (
-                        value.isoformat()
-                        if isinstance(
-                            value,
-                            pd.Timestamp,
-                        )
-                        else value
-                    )
-                )
-            )
+        if available:
+            print(f"Using demographic baseline: {path}")
+            print(f"Demographic columns found: {available}")
+            out = df[["GEOID"] + available].copy()
+            for col in available:
+                out[col] = pd.to_numeric(out[col], errors="coerce")
+            return out
 
-    geojson_data = json.loads(
-        plot_gdf.to_json(
-            default=str
-        )
+        print(f"Found baseline candidate but no expected demographic columns: {path}")
+
+    print("No usable demographic baseline found. Checked:")
+    for path in BASELINE_CANDIDATES:
+        print(f"  {path}")
+    return pd.DataFrame(columns=["GEOID"])
+```
+
+```{python}
+language = pd.read_csv(LANGUAGE_PATH, dtype={"GEOID": "string"})
+language = add_geoid(language)
+
+baseline = load_demographic_baseline()
+
+tract_universe, cb3_geometry, _, _ = load_cb3_tract_universe(PROJECT_DIR)
+tract_universe["GEOID"] = normalize_geoid(tract_universe["GEOID"])
+cb3_geometry["GEOID"] = normalize_geoid(cb3_geometry["GEOID"])
+
+tracts = cb3_geometry.merge(
+    tract_universe.drop(columns="geometry", errors="ignore"),
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
+
+tracts = tracts.merge(
+    language[[col for col in language.columns if col == "GEOID" or col not in tracts.columns]],
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
+
+if not baseline.empty:
+    tracts = tracts.merge(
+        baseline[[col for col in baseline.columns if col == "GEOID" or col not in tracts.columns]],
+        on="GEOID",
+        how="left",
+        validate="one_to_one",
     )
 
-    bounds = plot_gdf.total_bounds
+tracts = tracts.to_crs("EPSG:4326")
 
-    map_object = folium.Map(
-        tiles="CartoDB positron",
-        control_scale=True,
-    )
+for col in tracts.columns:
+    if col != "geometry" and col not in ["GEOID", "NAME", "nta_name", "nta_code", "cdta_name", "cdta_code", "tract_name"]:
+        tracts[col] = pd.to_numeric(tracts[col], errors="ignore")
 
-    folium.Choropleth(
-        geo_data=geojson_data,
-        data=plot_gdf,
-        columns=[
-            "GEOID",
-            quintile_code_column,
-        ],
-        key_on=(
-            "feature.properties.GEOID"
-        ),
-        fill_color=palette,
-        fill_opacity=0.82,
-        line_color="#555555",
-        line_weight=0.8,
-        line_opacity=0.85,
-        nan_fill_color="#d9d9d9",
-        nan_fill_opacity=0.75,
-        threshold_scale=[
-            1,
-            2,
-            3,
-            4,
-            5,
-            6,
-        ],
-        legend_name=None,
-        highlight=False,
-    ).add_to(
-        map_object
-    )
+for metric in LANGUAGE_METRICS:
+    if metric not in tracts.columns:
+        raise KeyError(f"Missing required Language metric column: {metric}")
+    tracts[metric] = pd.to_numeric(tracts[metric], errors="coerce")
 
+DEMOGRAPHIC_LAYERS = [
+    metric for metric in DEMOGRAPHIC_LAYER_CANDIDATES
+    if metric in tracts.columns and pd.to_numeric(tracts[metric], errors="coerce").notna().any()
+]
+
+for metric in DEMOGRAPHIC_LAYERS:
+    tracts[metric] = pd.to_numeric(tracts[metric], errors="coerce")
+
+assert len(tracts) == 31
+assert tracts["GEOID"].is_unique
+
+print(f"Rows: {len(tracts)}")
+print("Language bubble overlays:")
+for metric in LANGUAGE_METRICS:
+    print(f"  {metric}: {tracts[metric].notna().sum()} non-null")
+
+print("Demographic side-panel options:")
+if DEMOGRAPHIC_LAYERS:
+    for metric in DEMOGRAPHIC_LAYERS:
+        print(f"  {metric}: {tracts[metric].notna().sum()} non-null")
+else:
+    print("  none")
+```
+
+## Map helpers
+
+```{python}
+BACKGROUND_PALETTE = ["#fff7fb", "#ece2f0", "#d0d1e6", "#a6bddb", "#67a9cf", "#1c9099", "#016c59"]
+BUBBLE_COLOR = "#111111"
+BUBBLE_FILL = "#111111"
+
+
+def _meta(metric):
+    return LANGUAGE_METADATA.get(metric) or DEMOGRAPHIC_METADATA.get(metric) or {}
+
+
+def _metric_label(metric):
+    return _meta(metric).get("label", metric)
+
+
+def _metric_short_label(metric):
+    return _meta(metric).get("short_label", metric)
+
+
+def _metric_unit(metric):
+    return _meta(metric).get("unit", "%")
+
+
+def _format_value(value, unit="%"):
+    if pd.isna(value):
+        return "Not available"
+    if unit == "%":
+        return f"{value:.1f}%"
+    if unit == "$":
+        return f"${value:,.0f}"
+    if unit == "count":
+        return f"{value:,.0f}"
+    return f"{value:.1f} {unit}".strip()
+
+
+def _classification_breaks(values, bins=5):
+    valid = pd.Series(values).dropna()
+    valid = valid[valid >= 0]
+    if valid.empty:
+        return [0, 1]
+    if valid.nunique() <= bins:
+        breaks = sorted(valid.unique())
+    else:
+        breaks = list(valid.quantile(np.linspace(0, 1, bins + 1)).values)
+    breaks = sorted(set(float(x) for x in breaks if pd.notna(x)))
+    if len(breaks) == 1:
+        breaks = [0.0, breaks[0]] if breaks[0] > 0 else [0.0, 1.0]
+    cleaned = [breaks[0]]
+    for value in breaks[1:]:
+        if value <= cleaned[-1]:
+            value = cleaned[-1] + 1e-9
+        cleaned.append(value)
+    return cleaned
+
+
+def _prep_display_columns(geodata, metric):
+    plot_data = geodata.copy()
+    unit = _metric_unit(metric)
+    count_col = _meta(metric).get("count_col")
+    denominator_col = _meta(metric).get("denominator_col")
+
+    plot_data[metric] = pd.to_numeric(plot_data[metric], errors="coerce")
+    plot_data[f"{metric}_display"] = plot_data[metric].apply(lambda v: _format_value(v, unit))
+
+    if count_col and count_col in plot_data.columns:
+        plot_data[count_col] = pd.to_numeric(plot_data[count_col], errors="coerce")
+        plot_data[f"{count_col}_display"] = plot_data[count_col].apply(lambda v: _format_value(v, "count"))
+
+    if denominator_col and denominator_col in plot_data.columns:
+        plot_data[denominator_col] = pd.to_numeric(plot_data[denominator_col], errors="coerce")
+        plot_data[f"{denominator_col}_display"] = plot_data[denominator_col].apply(lambda v: _format_value(v, "count"))
+
+    return plot_data
+```
+
+```{python}
+def add_demographic_layer(map_object, geodata, metric):
+    label = _metric_short_label(metric)
+    plot_data = geodata.copy()
+    plot_data[metric] = pd.to_numeric(plot_data[metric], errors="coerce")
+
+    breaks = _classification_breaks(plot_data[metric], bins=5)
+    colors = BACKGROUND_PALETTE[: max(2, len(breaks) - 1)]
+    if len(colors) < len(breaks) - 1:
+        colors = BACKGROUND_PALETTE
+
+    color_map = cm.StepColormap(colors=colors, index=breaks, vmin=breaks[0], vmax=breaks[-1])
+
+    def style_function(feature):
+        value = feature["properties"].get(metric)
+        fill_color = "#f7f7f7" if value is None or pd.isna(value) else color_map(value)
+        return {
+            "fillColor": fill_color,
+            "color": "#4d4d4d",
+            "weight": 1.1,
+            "fillOpacity": 0.72,
+        }
+
+    group = folium.FeatureGroup(name=label, show=False, control=False)
+    folium.GeoJson(plot_data, interactive=False, style_function=style_function).add_to(group)
+    group.add_to(map_object)
+    return {"label": label, "js_name": group.get_name(), "metric": metric}
+
+
+def add_no_background_layer(map_object, geodata):
+    group = folium.FeatureGroup(name="No demographic background", show=False, control=False)
     folium.GeoJson(
-        geojson_data,
+        geodata,
+        interactive=False,
         style_function=lambda feature: {
+            "fillColor": "#ffffff",
+            "color": "#4d4d4d",
+            "weight": 1.0,
+            "fillOpacity": 0.0,
+        },
+    ).add_to(group)
+    group.add_to(map_object)
+    return {"label": "No demographic background", "js_name": group.get_name(), "metric": "__none__"}
+
+
+def add_tract_outline_layer(map_object, geodata):
+    group = folium.FeatureGroup(name="CB3 census tract outlines", show=True, control=False)
+    folium.GeoJson(
+        geodata,
+        interactive=False,
+        style_function=lambda feature: {
+            "fillColor": "transparent",
+            "color": "#333333",
+            "weight": 1.4,
             "fillOpacity": 0,
-            "color": "#555555",
-            "weight": 0.8,
         },
-        highlight_function=lambda feature: {
-            "weight": 2,
-            "color": "#111111",
-        },
-        tooltip=folium.GeoJsonTooltip(
-            fields=tooltip_fields,
-            aliases=tooltip_aliases,
-            localize=True,
-            sticky=False,
-            labels=True,
-        ),
-    ).add_to(
-        map_object
-    )
+    ).add_to(group)
+    group.add_to(map_object)
+    return {"label": "CB3 census tract outlines", "js_name": group.get_name()}
 
-    map_object.fit_bounds(
-        [
-            [
-                bounds[1],
-                bounds[0],
-            ],
-            [
-                bounds[3],
-                bounds[2],
-            ],
+
+def add_language_bubble_layer(map_object, geodata, metric, show=True):
+    meta = _meta(metric)
+    label = _metric_short_label(metric)
+    count_col = meta.get("count_col")
+    denominator_col = meta.get("denominator_col")
+    count_label = meta.get("count_label", "Count")
+    denominator_label = meta.get("denominator_label", "Denominator")
+
+    plot_data = _prep_display_columns(geodata, metric)
+
+    if count_col and count_col in plot_data.columns:
+        size_values = pd.to_numeric(plot_data[count_col], errors="coerce").fillna(0)
+    else:
+        size_values = pd.to_numeric(plot_data[metric], errors="coerce").fillna(0)
+
+    max_size_value = max(float(size_values.max(skipna=True)), 1.0)
+
+    projected = plot_data.to_crs("EPSG:2263")
+    points = projected.copy()
+    points["geometry"] = points.geometry.representative_point()
+    points = points.to_crs("EPSG:4326")
+
+    group = folium.FeatureGroup(name=f"{label} bubbles", show=show, control=False)
+
+    for _, row in points.iterrows():
+        share_value = row.get(metric)
+        if pd.isna(share_value):
+            continue
+
+        count_value = row.get(count_col) if count_col in points.columns else np.nan
+        size_source = count_value if pd.notna(count_value) else share_value
+        radius = 4 + 13 * np.sqrt(max(float(size_source), 0) / max_size_value)
+
+        tooltip_lines = [
+            f"<b>Tract:</b> {row.get('tract_label', row.get('GEOID', ''))}",
+            f"<b>NTA:</b> {row.get('nta_name', '')}",
+            f"<b>{label}:</b> {row.get(f'{metric}_display', _format_value(share_value, '%'))}",
         ]
+        if count_col and f"{count_col}_display" in row:
+            tooltip_lines.append(f"<b>{count_label}:</b> {row.get(f'{count_col}_display')}")
+        if denominator_col and f"{denominator_col}_display" in row:
+            tooltip_lines.append(f"<b>{denominator_label}:</b> {row.get(f'{denominator_col}_display')}")
+
+        tooltip_html = "<br>".join(tooltip_lines)
+
+        folium.CircleMarker(
+            location=[row.geometry.y, row.geometry.x],
+            radius=radius,
+            color=BUBBLE_COLOR,
+            weight=1.4,
+            fill=True,
+            fill_color=BUBBLE_FILL,
+            fill_opacity=0.38,
+            opacity=0.72,
+            tooltip=folium.Tooltip(tooltip_html, sticky=True),
+            popup=folium.Popup(tooltip_html, max_width=320),
+        ).add_to(group)
+
+    group.add_to(map_object)
+    return {"label": f"{label} bubbles", "js_name": group.get_name(), "metric": metric, "show": show}
+```
+
+```{python}
+def add_custom_side_panel(map_object, demographic_layers, bubble_layers, outline_layer, default_demographic_index=0):
+    map_name = map_object.get_name()
+
+    demo_html = []
+    for i, layer in enumerate(demographic_layers):
+        checked = "checked" if i == default_demographic_index else ""
+        demo_html.append(
+            f"""
+            <label class="cb3-layer-option">
+              <input type="radio" name="cb3-demographic-bg" value="{i}" {checked}>
+              {html.escape(layer["label"])}
+            </label>
+            """
+        )
+
+    bubble_html = []
+    for i, layer in enumerate(bubble_layers):
+        checked = "checked" if layer.get("show") else ""
+        bubble_html.append(
+            f"""
+            <label class="cb3-layer-option">
+              <input type="checkbox" class="cb3-bubble-toggle" value="{i}" {checked}>
+              {html.escape(layer["label"])}
+            </label>
+            """
+        )
+
+    panel_html = f"""
+    <div id="cb3-custom-layer-panel" class="cb3-layer-panel">
+      <div class="cb3-layer-section">
+        {''.join(demo_html)}
+      </div>
+      <hr>
+      <div class="cb3-layer-section">
+        <label class="cb3-layer-option">
+          <input type="checkbox" id="cb3-outline-toggle" checked>
+          {html.escape(outline_layer["label"])}
+        </label>
+        {''.join(bubble_html)}
+      </div>
+    </div>
+    """
+
+    css = """
+    <style>
+      #cb3-custom-layer-panel {
+        position: fixed !important;
+        top: 12px !important;
+        right: 12px !important;
+        z-index: 2147483647 !important;
+        background: rgba(255,255,255,0.97) !important;
+        border: 2px solid #888 !important;
+        border-radius: 6px !important;
+        padding: 10px 12px !important;
+        min-width: 330px !important;
+        max-width: 390px !important;
+        max-height: 80vh !important;
+        overflow-y: auto !important;
+        font-family: Arial, sans-serif !important;
+        font-size: 15px !important;
+        line-height: 1.35 !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
+      }
+      #cb3-custom-layer-panel .cb3-layer-option {
+        display: block !important;
+        margin: 5px 0 !important;
+        color: #222 !important;
+        white-space: normal !important;
+      }
+      #cb3-custom-layer-panel input {
+        margin-right: 7px !important;
+        transform: scale(1.15);
+      }
+      #cb3-custom-layer-panel hr {
+        border: none !important;
+        border-top: 1px solid #ccc !important;
+        margin: 8px 0 !important;
+      }
+      .leaflet-tooltip {
+        z-index: 2147483647 !important;
+      }
+    </style>
+    """
+
+    demo_js_entries = ",\n".join(
+        [f'{{label: {json.dumps(layer["label"])}, layer: {layer["js_name"]}}}' for layer in demographic_layers]
+    )
+    bubble_js_entries = ",\n".join(
+        [f'{{label: {json.dumps(layer["label"])}, layer: {layer["js_name"]}}}' for layer in bubble_layers]
     )
 
-    add_map_title(
-        map_object=map_object,
-        title=title,
-    )
+    js = f"""
+    <script>
+    (function() {{
+      function setupCB3Panel() {{
+        var map = {map_name};
+        var demoLayers = [{demo_js_entries}];
+        var bubbleLayers = [{bubble_js_entries}];
+        var outlineLayer = {outline_layer["js_name"]};
 
-    add_quintile_legend(
-        map_object=map_object,
-        palette=palette,
-    )
+        function setDemoLayer(index) {{
+          demoLayers.forEach(function(item) {{
+            if (map.hasLayer(item.layer)) {{
+              map.removeLayer(item.layer);
+            }}
+          }});
+          if (demoLayers[index]) {{
+            demoLayers[index].layer.addTo(map);
+          }}
+        }}
 
-    output_path = (
-        MAP_OUTPUT_DIR
-        / output_filename
-    )
+        function setBubbleLayer(index, visible) {{
+          if (!bubbleLayers[index]) return;
+          var layer = bubbleLayers[index].layer;
+          if (visible) {{
+            if (!map.hasLayer(layer)) layer.addTo(map);
+          }} else {{
+            if (map.hasLayer(layer)) map.removeLayer(layer);
+          }}
+        }}
 
-    map_object.save(
-        str(output_path)
-    )
+        var demoInputs = document.querySelectorAll('input[name="cb3-demographic-bg"]');
+        demoInputs.forEach(function(input) {{
+          input.addEventListener('change', function(e) {{
+            setDemoLayer(parseInt(e.target.value));
+          }});
+        }});
 
+        var bubbleInputs = document.querySelectorAll('.cb3-bubble-toggle');
+        bubbleInputs.forEach(function(input) {{
+          input.addEventListener('change', function(e) {{
+            setBubbleLayer(parseInt(e.target.value), e.target.checked);
+          }});
+        }});
+
+        var outlineInput = document.getElementById('cb3-outline-toggle');
+        if (outlineInput) {{
+          outlineInput.addEventListener('change', function(e) {{
+            if (e.target.checked) {{
+              if (!map.hasLayer(outlineLayer)) outlineLayer.addTo(map);
+            }} else {{
+              if (map.hasLayer(outlineLayer)) map.removeLayer(outlineLayer);
+            }}
+          }});
+        }}
+
+        var checkedDemo = document.querySelector('input[name="cb3-demographic-bg"]:checked');
+        if (checkedDemo) {{
+          setDemoLayer(parseInt(checkedDemo.value));
+        }}
+      }}
+
+      if (document.readyState === 'loading') {{
+        document.addEventListener('DOMContentLoaded', setupCB3Panel);
+      }} else {{
+        setupCB3Panel();
+      }}
+    }})();
+    </script>
+    """
+
+    map_object.get_root().html.add_child(folium.Element(css + panel_html + js))
     return map_object
 ```
 
 ```{python}
-if not CLEAN_FILE.exists():
-    raise FileNotFoundError(
-        f"Clean language file not found: {CLEAN_FILE}"
+def save_language_map(metric, title, subtitle, output_filename=None):
+    filename = output_filename or LANGUAGE_METADATA[metric].get("filename", f"{metric}.html")
+    output_path = MAP_OUTPUT_DIR / filename
+
+    map_object = make_base_map(tracts)
+
+    demographic_layers = []
+    for metric_name in DEMOGRAPHIC_LAYER_CANDIDATES:
+        if metric_name in DEMOGRAPHIC_LAYERS:
+            demographic_layers.append(add_demographic_layer(map_object, tracts, metric_name))
+    demographic_layers.append(add_no_background_layer(map_object, tracts))
+
+    outline_layer = add_tract_outline_layer(map_object, tracts)
+    bubble_layers = [add_language_bubble_layer(map_object, tracts, metric, show=True)]
+
+    default_idx = 0
+    for i, layer in enumerate(demographic_layers):
+        if layer["metric"] == "white_non_hispanic_share":
+            default_idx = i
+
+    add_map_title(map_object, title, subtitle)
+    add_custom_side_panel(map_object, demographic_layers, bubble_layers, outline_layer, default_demographic_index=default_idx)
+
+    map_object.save(output_path)
+    print(f"Saved {output_path}")
+    return map_object
+
+
+def save_combined_language_layer_map():
+    output_path = MAP_OUTPUT_DIR / "language_household_lep_layers.html"
+
+    map_object = make_base_map(tracts)
+
+    demographic_layers = []
+    for metric_name in DEMOGRAPHIC_LAYER_CANDIDATES:
+        if metric_name in DEMOGRAPHIC_LAYERS:
+            demographic_layers.append(add_demographic_layer(map_object, tracts, metric_name))
+    demographic_layers.append(add_no_background_layer(map_object, tracts))
+
+    outline_layer = add_tract_outline_layer(map_object, tracts)
+
+    bubble_layers = []
+    for i, metric_name in enumerate(LANGUAGE_METRICS):
+        bubble_layers.append(add_language_bubble_layer(map_object, tracts, metric_name, show=(i == 0)))
+
+    default_idx = 0
+    for i, layer in enumerate(demographic_layers):
+        if layer["metric"] == "white_non_hispanic_share":
+            default_idx = i
+
+    add_map_title(
+        map_object,
+        "CB3 Language: household limited-English patterns",
+        "Bubbles show language-access metrics; tract colors show selectable demographic context. Hover over bubbles for exact values.",
     )
+    add_custom_side_panel(map_object, demographic_layers, bubble_layers, outline_layer, default_demographic_index=default_idx)
 
-if not BOUNDARY_FILE.exists():
-    raise FileNotFoundError(
-        f"Boundary file not found: {BOUNDARY_FILE}"
-    )
+    map_object.save(output_path)
+    print(f"Saved {output_path}")
+    return map_object
+```
 
-language = pd.read_csv(
-    CLEAN_FILE,
-    dtype={
-        "GEOID": str,
-    },
+## Primary maps
+
+```{python}
+asian_pacific_map = save_language_map(
+    "asian_pacific_limited_english_household_share",
+    "CB3 Language: Asian/Pacific Island language LEP households",
+    "Bubbles show Asian/Pacific Island language LEP households; tract colors show selectable demographic context.",
 )
-
-tracts = gpd.read_file(
-    BOUNDARY_FILE
-)
-
-language = prepare_geoid(
-    language
-)
-
-tracts = prepare_geoid(
-    tracts
-)
-
-language_map = tracts.merge(
-    language,
-    on="GEOID",
-    how="left",
-    validate="one_to_one",
-).to_crs(
-    4326
-)
-
-if not language_map["GEOID"].is_unique:
-    raise ValueError(
-        "GEOID is not unique after the geographic merge."
-    )
+asian_pacific_map
 ```
 
 ```{python}
-lep_household_map = make_quintile_map(
-    gdf=language_map,
-    metric="lep_household_share",
-    title=(
-        "Limited-English-Proficient "
-        "Households"
-    ),
-    value_alias="LEP household share (%)",
-    palette="YlOrRd",
-    output_filename="lep_household_share.html",
+spanish_map = save_language_map(
+    "spanish_limited_english_household_share",
+    "CB3 Language: Spanish-speaking LEP households",
+    "Bubbles show Spanish-speaking LEP households; tract colors show selectable demographic context.",
 )
+spanish_map
+```
 
-display(
-    lep_household_map
-)
+## Supplementary maps
+
+```{python}
+supplementary_maps = {}
+for metric in [
+    "lep_household_share",
+    "other_indo_european_limited_english_household_share",
+    "other_languages_limited_english_household_share",
+]:
+    supplementary_maps[metric] = save_language_map(
+        metric,
+        f"CB3 Language: {_metric_short_label(metric)}",
+        "Bubbles show language-access values; tract colors show selectable demographic context.",
+    )
+```
+
+## Combined interactive layer map
+
+```{python}
+combined_language_map = save_combined_language_layer_map()
+combined_language_map
+```
+
+## Validation summary
+
+```{python}
+summary_rows = []
+for metric in LANGUAGE_METRICS:
+    meta = LANGUAGE_METADATA[metric]
+    count_col = meta.get("count_col")
+    summary_rows.append(
+        {
+            "metric": metric,
+            "label": _metric_short_label(metric),
+            "tracts_with_data": int(tracts[metric].notna().sum()),
+            "max_tract_share": tracts[metric].max(skipna=True),
+            "total_count": tracts[count_col].sum(skipna=True) if count_col in tracts.columns else None,
+        }
+    )
+
+summary = pd.DataFrame(summary_rows)
+display(summary)
+
+if DEMOGRAPHIC_LAYERS:
+    demographic_summary = pd.DataFrame(
+        [
+            {
+                "metric": metric,
+                "label": _metric_short_label(metric),
+                "tracts_with_data": int(tracts[metric].notna().sum()),
+                "min": tracts[metric].min(skipna=True),
+                "max": tracts[metric].max(skipna=True),
+            }
+            for metric in DEMOGRAPHIC_LAYERS
+        ]
+    )
+    display(demographic_summary)
+else:
+    print("No demographic layers were added. Confirm that a baseline file exists and contains demographic columns.")
 ```
 
 ```{python}
-senior_lep_map = make_quintile_map(
-    gdf=language_map,
-    metric=(
-        "senior_asian_pacific_lep_count"
-    ),
-    title=(
-        "Asian/Pacific-Language-Speaking "
-        "Seniors with Limited English Proficiency"
-    ),
-    value_alias=(
-        "Senior Asian/Pacific-language "
-        "LEP count"
-    ),
-    palette="PuRd",
-    output_filename=(
-        "senior_asian_pacific_lep_count.html"
-    ),
-)
+expected_files = [
+    MAP_OUTPUT_DIR / LANGUAGE_METADATA[metric].get("filename", f"{metric}.html")
+    for metric in LANGUAGE_METRICS
+] + [
+    MAP_OUTPUT_DIR / "language_household_lep_layers.html",
+]
 
-display(
-    senior_lep_map
-)
+for path in expected_files:
+    assert path.exists(), path
+    assert path.stat().st_size > 10_000, path
+
+print(f"Wrote {len(expected_files)} language map files to {MAP_OUTPUT_DIR}")
+print(f"Language bubble overlays: {len(LANGUAGE_METRICS)}")
+print(f"Demographic custom side-panel options: {len(DEMOGRAPHIC_LAYERS)}")
 ```
