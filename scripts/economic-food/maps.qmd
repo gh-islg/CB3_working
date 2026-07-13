@@ -1,22 +1,34 @@
 ---
+title: "CB3 Economic Security and Food Maps"
 format:
   html:
-    self-contained: true
+    toc: true
+    code-fold: true
+    embed-resources: true
 execute:
-  echo: false
+  echo: true
   warning: false
   message: false
+jupyter: python3
 ---
 
+## Economic Security and Food Maps
+
+This renders one saved HTML map per available Economic Security & Food metric group.
+
 ```{python}
-import sys
 from pathlib import Path
+import html
+import sys
 
-# ------------------------------------------------------------
-# Find project root and make src/ importable
-# ------------------------------------------------------------
+import branca.colormap as cm
+import folium
+import geopandas as gpd
+import numpy as np
+import pandas as pd
+from IPython.display import display, HTML
+
 PROJECT_DIR = Path.cwd()
-
 while not (PROJECT_DIR / "src").exists() and PROJECT_DIR != PROJECT_DIR.parent:
     PROJECT_DIR = PROJECT_DIR.parent
 
@@ -25,179 +37,562 @@ if not (PROJECT_DIR / "src").exists():
 
 sys.path.insert(0, str(PROJECT_DIR))
 
-import yaml
-import pandas as pd
-import geopandas as gpd
-from IPython.display import display, HTML
+from src.cb3_utils import load_cb3_tract_universe
+from src.map_utils import make_base_map
 
-from src.map_utils import (
-    add_metric_layer,
-    make_base_map,
-)
+CLEAN_DIR = PROJECT_DIR / "data" / "clean"
+MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "economic-food"
+MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-DOMAIN = "economic-food"
+ECONOMIC_FOOD_PATH = CLEAN_DIR / "economic-food.csv"
+PROVIDER_PATH = CLEAN_DIR / "emergency_food_providers.csv"
+```
 
-CLEAN_PATH = PROJECT_DIR / "data" / "clean" / "economic-food.csv"
-GEOGRAPHY_PATH = PROJECT_DIR / "data" / "raw" / "Geography" / "cb3_2020_census_tracts.geojson"
-METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
-
-
-# ------------------------------------------------------------
-# Page-level CSS
-# ------------------------------------------------------------
+```{python}
 display(
     HTML(
         """
         <style>
-        h1.title {
-            display: none;
-        }
-
-        .quarto-title-block {
-            display: none;
-        }
-
-        .cell-output-stdout {
-            display: none;
-        }
-
-        .leaflet-top.leaflet-left {
-            left: auto !important;
-            right: 10px !important;
-        }
-
-        .leaflet-top.leaflet-left .leaflet-control {
-            margin-left: 0 !important;
-            margin-right: 10px !important;
-        }
-
-        .leaflet-control-layers {
-            display: none;
-        }
-
-        .economic-food-map-title {
-            font-family: Arial, sans-serif;
-            font-size: 18px;
-            font-weight: 700;
-            margin-top: 24px;
-            margin-bottom: 8px;
-        }
+        h1.title, .quarto-title-block { display: none; }
+        .leaflet-container { font-family: Arial, sans-serif; }
+        .leaflet-tooltip { z-index: 2147483647 !important; }
         </style>
         """
     )
 )
+```
+
+```{python}
+MAP_GROUPS = {
+    "safety_net": {
+        "title": "CB3 Economic Security: Safety-net reliance",
+        "subtitle": "Bubbles show DRS Medicaid + SNAP + Cash Assistance context; tract colors show selectable demographic context.",
+        "filename": "01_safety_net_reliance_by_tract.html",
+        "bubble_metrics": ["safety_net_enrollment_per_capita", "poverty_rate_pct"],
+        "provider_points": False,
+    },
+    "labor_market": {
+        "title": "CB3 Economic Security: Labor market conditions",
+        "subtitle": "Bubbles show unemployment, household income, and B20002 median earnings when available.",
+        "filename": "02_labor_market_conditions_by_tract.html",
+        "bubble_metrics": [
+            "unemployment_rate_pct",
+            "median_household_income",
+            "median_earnings_all_workers",
+        ],
+        "provider_points": False,
+    },
+    "food_insecurity": {
+        "title": "CB3 Economic Security & Food: Food insecurity",
+        "subtitle": "Bubbles show PLACES tract food insecurity; food supply gap context and provider points are included when available.",
+        "filename": "03_food_insecurity_and_provider_locations.html",
+        "bubble_metrics": [
+            "food_insecurity_rate_pct",
+            "food_supply_gap_score_nta",
+            "food_supply_gap_food_insecure_pct_nta",
+        ],
+        "provider_points": True,
+    },
+    "utility_shutoff": {
+        "title": "CB3 Economic Security: Utility shutoff risk",
+        "subtitle": "Bubbles show PLACES SHUTUTILITY tract estimates; tract colors show selectable demographic context.",
+        "filename": "04_utility_shutoff_risk_by_tract.html",
+        "bubble_metrics": ["utility_shutoff_risk_pct"],
+        "provider_points": False,
+    },
+}
+
+BUBBLE_METRICS = {
+    "safety_net_enrollment_per_capita": {
+        "label": "Safety-net reliance",
+        "unit": "rate",
+        "count_col": "safety_net_enrollment",
+        "denominator_col": "drs_population",
+        "count_label": "Combined safety-net enrollment",
+        "denominator_label": "ACS poverty universe denominator",
+        "geography_note": "DRS counts are CD-level context assigned to CB3 tracts.",
+    },
+    "poverty_rate_pct": {
+        "label": "Poverty rate",
+        "unit": "%",
+        "count_col": "poverty_count",
+        "denominator_col": "poverty_universe_population",
+        "count_label": "Population below poverty",
+        "denominator_label": "Poverty universe population",
+        "geography_note": "ACS B17020 tract-level estimate.",
+    },
+    "unemployment_rate_pct": {
+        "label": "Unemployment rate",
+        "unit": "%",
+        "count_col": "unemployed_population",
+        "denominator_col": "civilian_labor_force",
+        "count_label": "Unemployed population",
+        "denominator_label": "Civilian labor force",
+        "geography_note": "ACS B23025 tract-level estimate.",
+    },
+    "median_household_income": {
+        "label": "Median household income",
+        "unit": "$",
+        "geography_note": "ACS B19013 tract-level estimate.",
+    },
+    "median_earnings_all_workers": {
+        "label": "Median earnings, all workers",
+        "unit": "$",
+        "geography_note": "ACS B20002 tract-level estimate.",
+    },
+    "food_insecurity_rate_pct": {
+        "label": "Food insecurity",
+        "unit": "%",
+        "geography_note": "PLACES FOODINSECU_CrudePrev tract estimate.",
+        "extra_tooltip_cols": [
+            ("food_supply_gap_rank_nta", "Food supply gap rank, NTA", "rank"),
+            ("food_supply_gap_score_nta", "Food supply gap score, NTA", "score"),
+            ("food_supply_gap_food_insecure_pct_nta", "Food insecure percentage, NTA", "%"),
+        ],
+    },
+    "food_supply_gap_score_nta": {
+        "label": "Food supply gap score",
+        "unit": "score",
+        "geography_note": "Emergency Food Supply Gap NTA-level context.",
+        "extra_tooltip_cols": [
+            ("food_supply_gap_rank_nta", "Food supply gap rank, NTA", "rank"),
+            ("food_supply_gap_food_insecure_pct_nta", "Food insecure percentage, NTA", "%"),
+        ],
+    },
+    "food_supply_gap_food_insecure_pct_nta": {
+        "label": "Food insecure percentage, NTA",
+        "unit": "%",
+        "geography_note": "Emergency Food Supply Gap NTA-level context.",
+        "extra_tooltip_cols": [
+            ("food_supply_gap_rank_nta", "Food supply gap rank, NTA", "rank"),
+            ("food_supply_gap_score_nta", "Food supply gap score, NTA", "score"),
+        ],
+    },
+    "utility_shutoff_risk_pct": {
+        "label": "Utility shutoff risk",
+        "unit": "%",
+        "geography_note": "PLACES SHUTUTILITY_CrudePrev tract estimate.",
+    },
+}
+
+DEMOGRAPHIC_LAYERS = {
+    "median_household_income": {"label": "Median household income", "unit": "$"},
+    "poverty_rate_pct": {"label": "Poverty rate", "unit": "%"},
+}
+DEMOGRAPHIC_LAYER_ORDER = ["median_household_income", "poverty_rate_pct"]
+```
+
+```{python}
+def normalize_geoid(series):
+    return (
+        series.astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .str.extract(r"(\d+)")[0]
+        .str.zfill(11)
+    )
 
 
-# ------------------------------------------------------------
-# Load clean economic/food data
-# ------------------------------------------------------------
-clean = pd.read_csv(CLEAN_PATH, dtype={"GEOID": str})
-clean["GEOID"] = clean["GEOID"].astype(str).str.zfill(11)
+def add_geoid(df):
+    df = df.copy()
+    if "GEOID" in df.columns:
+        df["GEOID"] = normalize_geoid(df["GEOID"])
+        return df
+    if "geoid" in df.columns:
+        df = df.rename(columns={"geoid": "GEOID"})
+        df["GEOID"] = normalize_geoid(df["GEOID"])
+        return df
+    if "GEOID20" in df.columns:
+        df = df.rename(columns={"GEOID20": "GEOID"})
+        df["GEOID"] = normalize_geoid(df["GEOID"])
+        return df
+    if {"state", "county", "tract"}.issubset(df.columns):
+        df["GEOID"] = (
+            df["state"].astype(str).str.zfill(2)
+            + df["county"].astype(str).str.zfill(3)
+            + df["tract"].astype(str).str.zfill(6)
+        )
+        return df
+    raise KeyError(f"Could not create GEOID from columns: {list(df.columns)}")
+```
 
+```{python}
+if not ECONOMIC_FOOD_PATH.exists():
+    raise FileNotFoundError(f"Could not find clean file: {ECONOMIC_FOOD_PATH}")
 
-# ------------------------------------------------------------
-# Load CB3 tract geography
-# ------------------------------------------------------------
-tracts = gpd.read_file(GEOGRAPHY_PATH)
-tracts.columns = tracts.columns.str.strip()
+economic_food = pd.read_csv(ECONOMIC_FOOD_PATH, dtype={"GEOID": "string"})
+economic_food = add_geoid(economic_food)
 
-if "GEOID" not in tracts.columns:
-    if "geoid" in tracts.columns:
-        tracts = tracts.rename(columns={"geoid": "GEOID"})
-    else:
-        raise ValueError("Could not find GEOID/geoid column in CB3 geography file.")
+tract_universe, cb3_geometry, _, _ = load_cb3_tract_universe(PROJECT_DIR)
+tract_universe["GEOID"] = normalize_geoid(tract_universe["GEOID"])
+cb3_geometry["GEOID"] = normalize_geoid(cb3_geometry["GEOID"])
 
-tracts["GEOID"] = tracts["GEOID"].astype(str).str.zfill(11)
-
-
-# ------------------------------------------------------------
-# Join clean metrics to geography
-# ------------------------------------------------------------
-tracts = tracts.merge(
-    clean,
+tracts = cb3_geometry.merge(
+    tract_universe.drop(columns="geometry", errors="ignore"),
     on="GEOID",
     how="left",
     validate="one_to_one",
 )
 
+economic_cols = [col for col in economic_food.columns if col == "GEOID" or col not in tracts.columns]
+tracts = tracts.merge(economic_food[economic_cols], on="GEOID", how="left", validate="one_to_one")
+tracts = tracts.to_crs("EPSG:4326")
+
+if "tract_label" not in tracts.columns:
+    tracts["tract_label"] = tracts["GEOID"].str[-6:].str.lstrip("0")
+
+if "nta_name" not in tracts.columns:
+    if "nta_name_x" in tracts.columns:
+        tracts["nta_name"] = tracts["nta_name_x"]
+    elif "NTAName" in tracts.columns:
+        tracts["nta_name"] = tracts["NTAName"]
+    else:
+        tracts["nta_name"] = ""
+
+numeric_candidates = set(DEMOGRAPHIC_LAYER_ORDER)
+for metric, meta in BUBBLE_METRICS.items():
+    numeric_candidates.add(metric)
+    for col in [meta.get("count_col"), meta.get("denominator_col")]:
+        if col:
+            numeric_candidates.add(col)
+    for col, _, _ in meta.get("extra_tooltip_cols", []):
+        numeric_candidates.add(col)
+
+for col in numeric_candidates:
+    if col in tracts.columns:
+        tracts[col] = pd.to_numeric(tracts[col], errors="coerce")
+
+AVAILABLE_DEMOGRAPHIC_LAYERS = [
+    metric for metric in DEMOGRAPHIC_LAYER_ORDER
+    if metric in tracts.columns and tracts[metric].notna().any()
+]
+
+AVAILABLE_MAP_GROUPS = {}
+for group_key, group_spec in MAP_GROUPS.items():
+    available_bubbles = [
+        metric for metric in group_spec["bubble_metrics"]
+        if metric in tracts.columns and tracts[metric].notna().any()
+    ]
+    if available_bubbles:
+        AVAILABLE_MAP_GROUPS[group_key] = {**group_spec, "available_bubbles": available_bubbles}
+
 assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
-assert tracts["GEOID"].is_unique, "GEOID is not unique after merge."
+assert tracts["GEOID"].is_unique, "GEOID is not unique."
 
+print("Available maps:")
+for group_key, spec in AVAILABLE_MAP_GROUPS.items():
+    print(f"  {spec['filename']}: {spec['available_bubbles']}")
 
-# ------------------------------------------------------------
-# Load metric metadata
-# ------------------------------------------------------------
-with open(METADATA_PATH) as f:
-    all_metrics = yaml.safe_load(f)
+print("Available demographic backgrounds:")
+for metric in AVAILABLE_DEMOGRAPHIC_LAYERS:
+    print(f"  {DEMOGRAPHIC_LAYERS[metric]['label']} ({metric})")
+```
 
-metric_specs = {
-    var: meta
-    for var, meta in all_metrics.items()
-    if meta.get("domain") == DOMAIN
+```{python}
+if PROVIDER_PATH.exists():
+    providers = pd.read_csv(PROVIDER_PATH)
+    providers["latitude"] = pd.to_numeric(providers["latitude"], errors="coerce")
+    providers["longitude"] = pd.to_numeric(providers["longitude"], errors="coerce")
+    providers = providers.dropna(subset=["latitude", "longitude"]).copy()
+else:
+    providers = pd.DataFrame(columns=["provider_name", "address", "provider_type", "latitude", "longitude"])
+
+print(f"Emergency food provider points: {len(providers)}")
+```
+
+```{python}
+BACKGROUND_PALETTE = ["#f7fcf5", "#e5f5e0", "#c7e9c0", "#a1d99b", "#74c476", "#31a354", "#006d2c"]
+BUBBLE_COLORS = {
+    "safety_net_enrollment_per_capita": "#222222",
+    "poverty_rate_pct": "#555555",
+    "unemployment_rate_pct": "#222222",
+    "median_household_income": "#555555",
+    "median_earnings_all_workers": "#777777",
+    "food_insecurity_rate_pct": "#222222",
+    "food_supply_gap_score_nta": "#555555",
+    "food_supply_gap_food_insecure_pct_nta": "#777777",
+    "utility_shutoff_risk_pct": "#222222",
 }
+PROVIDER_COLOR = "#7a0177"
 
 
-# ------------------------------------------------------------
-# Select economic/food metrics to map
-# ------------------------------------------------------------
-preferred_metrics = [
-    "poverty_rate_pct",
-    "food_supply_gap_rank",
-    "food_supply_gap_score",
-]
+def format_value(value, unit):
+    if pd.isna(value):
+        return "Not available"
+    if unit == "%":
+        return f"{value:.1f}%"
+    if unit == "$":
+        return f"${value:,.0f}"
+    if unit == "rank":
+        return f"{value:,.0f}"
+    if unit == "score":
+        return f"{value:.2f}"
+    if unit == "rate":
+        return f"{value:.2f}"
+    if unit == "count":
+        return f"{value:,.0f}"
+    return f"{value:,.1f}"
 
-metrics_to_map = [
-    metric
-    for metric in preferred_metrics
-    if metric in metric_specs
-    and metric in tracts.columns
-    and not tracts[metric].isna().all()
-]
 
-if not metrics_to_map:
-    raise ValueError(
-        "No economic-food metrics found to map. Check docs/metric_metadata.yml "
-        "and data/clean/economic-food.csv."
+def make_breaks(values, bins=5):
+    valid = pd.Series(values).dropna()
+    valid = valid[valid >= 0]
+    if valid.empty:
+        return [0, 1]
+    if valid.nunique() <= bins:
+        breaks = sorted(valid.unique())
+    else:
+        breaks = list(valid.quantile(np.linspace(0, 1, bins + 1)).values)
+    breaks = sorted(set(float(x) for x in breaks if pd.notna(x)))
+    if len(breaks) == 1:
+        breaks = [0.0, breaks[0]] if breaks[0] > 0 else [0.0, 1.0]
+    cleaned = [breaks[0]]
+    for value in breaks[1:]:
+        if value <= cleaned[-1]:
+            value = cleaned[-1] + 1e-9
+        cleaned.append(value)
+    return cleaned
+
+
+def add_title(map_object, title, subtitle):
+    title_html = f"""
+    <div style="position: fixed; top: 12px; left: 120px; z-index: 999999;
+                background: rgba(255,255,255,0.92); border: 1px solid #999;
+                border-radius: 4px; padding: 10px 14px; max-width: 760px;
+                font-family: Arial, sans-serif;">
+      <div style="font-size:24px; font-weight:700; color:#222;">{html.escape(title)}</div>
+      <div style="margin-top:6px; font-size:17px; color:#222;">{html.escape(subtitle)}</div>
+    </div>
+    """
+    map_object.get_root().html.add_child(folium.Element(title_html))
+
+
+def add_demographic_layer(map_object, geodata, metric, show=False):
+    label = DEMOGRAPHIC_LAYERS[metric]["label"]
+    unit = DEMOGRAPHIC_LAYERS[metric]["unit"]
+    plot_data = geodata.copy()
+    plot_data[f"{metric}_display"] = plot_data[metric].apply(lambda x: format_value(x, unit))
+
+    breaks = make_breaks(plot_data[metric], bins=5)
+    color_map = cm.StepColormap(
+        colors=BACKGROUND_PALETTE[: max(2, len(breaks) - 1)],
+        index=breaks,
+        vmin=breaks[0],
+        vmax=breaks[-1],
     )
 
+    def style_function(feature):
+        value = feature["properties"].get(metric)
+        fill_color = "#f7f7f7" if value is None or pd.isna(value) else color_map(value)
+        return {"fillColor": fill_color, "color": "#555555", "weight": 1.1, "fillOpacity": 0.72}
 
-# ------------------------------------------------------------
-# Create one separate map per metric
-# ------------------------------------------------------------
-for metric in metrics_to_map:
-    meta = metric_specs[metric]
+    tooltip = folium.GeoJsonTooltip(
+        fields=["tract_label", "nta_name", f"{metric}_display"],
+        aliases=["Census tract", "NTA", label],
+        sticky=True,
+        labels=True,
+    )
 
+    group = folium.FeatureGroup(name=label, show=show)
+    folium.GeoJson(plot_data, style_function=style_function, tooltip=tooltip).add_to(group)
+    group.add_to(map_object)
+
+
+def add_outline_layer(map_object, geodata):
+    group = folium.FeatureGroup(name="CB3 census tract outlines", show=True)
+    folium.GeoJson(
+        geodata,
+        interactive=False,
+        style_function=lambda feature: {"fillColor": "transparent", "color": "#222222", "weight": 1.6, "fillOpacity": 0},
+    ).add_to(group)
+    group.add_to(map_object)
+
+
+def add_metric_bubbles(map_object, geodata, metric, show=True):
+    meta = BUBBLE_METRICS[metric]
+    label = meta["label"]
+    unit = meta["unit"]
+    count_col = meta.get("count_col")
+    denominator_col = meta.get("denominator_col")
+
+    plot_data = geodata.copy()
+    plot_data[f"{metric}_display"] = plot_data[metric].apply(lambda x: format_value(x, unit))
+
+    if count_col and count_col in plot_data.columns:
+        size_series = plot_data[count_col].fillna(0)
+    else:
+        size_series = plot_data[metric].fillna(0)
+
+    max_size = max(float(size_series.max(skipna=True)), 1.0)
+
+    projected = plot_data.to_crs("EPSG:2263")
+    points = projected.copy()
+    points["geometry"] = points.geometry.representative_point()
+    points = points.to_crs("EPSG:4326")
+
+    color = BUBBLE_COLORS.get(metric, "#222222")
+    group = folium.FeatureGroup(name=f"{label} bubbles", show=show)
+
+    for _, row in points.iterrows():
+        value = row.get(metric)
+        if pd.isna(value):
+            continue
+
+        if count_col and count_col in points.columns and pd.notna(row.get(count_col)):
+            size_value = row.get(count_col)
+        else:
+            size_value = value
+
+        radius = 5 + 22 * np.sqrt(max(float(size_value), 0) / max_size)
+
+        tooltip_rows = [
+            ("Census tract", row.get("tract_label", row.get("GEOID", ""))),
+            ("NTA", row.get("nta_name", "")),
+            (label, row.get(f"{metric}_display", format_value(value, unit))),
+        ]
+
+        if count_col and count_col in row and pd.notna(row.get(count_col)):
+            tooltip_rows.append((meta.get("count_label", "Count"), format_value(row.get(count_col), "count")))
+
+        if denominator_col and denominator_col in row and pd.notna(row.get(denominator_col)):
+            tooltip_rows.append((meta.get("denominator_label", "Denominator"), format_value(row.get(denominator_col), "count")))
+
+        for extra_col, extra_label, extra_unit in meta.get("extra_tooltip_cols", []):
+            if extra_col in row and pd.notna(row.get(extra_col)):
+                tooltip_rows.append((extra_label, format_value(row.get(extra_col), extra_unit)))
+
+        if meta.get("geography_note"):
+            tooltip_rows.append(("Geography", meta["geography_note"]))
+
+        tooltip_html = "<table>" + "".join(
+            f"<tr><td style='font-weight:700; padding:3px 12px 3px 0;'>{html.escape(str(k))}</td>"
+            f"<td style='padding:3px 0;'>{html.escape(str(v))}</td></tr>"
+            for k, v in tooltip_rows
+        ) + "</table>"
+
+        folium.CircleMarker(
+            location=[row.geometry.y, row.geometry.x],
+            radius=radius,
+            color=color,
+            weight=1.5,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.42,
+            opacity=0.70,
+            tooltip=folium.Tooltip(tooltip_html, sticky=True),
+            popup=folium.Popup(tooltip_html, max_width=420),
+        ).add_to(group)
+
+    group.add_to(map_object)
+
+
+def add_provider_points(map_object, provider_frame, show=False):
+    group = folium.FeatureGroup(name=f"Emergency food providers (n={len(provider_frame)})", show=show)
+    for _, row in provider_frame.iterrows():
+        name = row.get("provider_name", "Emergency food provider")
+        lines = [f"<b>{html.escape(str(name))}</b>"]
+        if pd.notna(row.get("provider_type")):
+            lines.append(f"Type: {html.escape(str(row.get('provider_type')))}")
+        if pd.notna(row.get("address")):
+            lines.append(f"Address: {html.escape(str(row.get('address')))}")
+        folium.CircleMarker(
+            location=[row["latitude"], row["longitude"]],
+            radius=5,
+            color=PROVIDER_COLOR,
+            fill=True,
+            fill_color=PROVIDER_COLOR,
+            fill_opacity=0.85,
+            tooltip=folium.Tooltip("<br>".join(lines), sticky=True),
+        ).add_to(group)
+    group.add_to(map_object)
+```
+
+```{python}
+def build_group_map(group_key, group_spec):
+    m = make_base_map(tracts)
+
+    if AVAILABLE_DEMOGRAPHIC_LAYERS:
+        for i, demo_metric in enumerate(AVAILABLE_DEMOGRAPHIC_LAYERS):
+            add_demographic_layer(m, tracts, demo_metric, show=(i == 0))
+
+    add_outline_layer(m, tracts)
+
+    for i, metric in enumerate(group_spec["available_bubbles"]):
+        add_metric_bubbles(m, tracts, metric, show=(i == 0))
+
+    if group_spec.get("provider_points") and not providers.empty:
+        add_provider_points(m, providers, show=False)
+
+    add_title(m, group_spec["title"], group_spec["subtitle"])
+    folium.LayerControl(collapsed=False).add_to(m)
+
+    return m
+
+
+rendered_maps = {}
+
+for group_key, group_spec in AVAILABLE_MAP_GROUPS.items():
+    output_path = MAP_OUTPUT_DIR / group_spec["filename"]
+    m = build_group_map(group_key, group_spec)
+    m.save(output_path)
+    rendered_maps[group_key] = m
+    print(f"Saved {group_key}: {output_path}")
+```
+
+## Preview all available maps
+
+```{python}
+if rendered_maps:
+    for group_key, map_object in rendered_maps.items():
+        display(HTML(f"<h3>{AVAILABLE_MAP_GROUPS[group_key]['title']}</h3>"))
+        display(map_object)
+else:
     display(
         HTML(
-            f"""
-            <div class="economic-food-map-title">
-                {meta["label"]}
+            """
+            <div style="padding: 12px; border: 1px solid #cc0000; background: #fff5f5;">
+              <b>No Economic/Food metric-group maps were rendered.</b>
             </div>
             """
         )
     )
+```
 
-    spec = {
-        "dimension": meta["short_label"],
-        "label": meta["label"],
-        "unit": meta["unit"],
-        "palette": meta["palette"],
-    }
+## Validation summary
 
-    for optional_key in ["positive_values_only", "zero_color", "zero_label"]:
-        if optional_key in meta:
-            spec[optional_key] = meta[optional_key]
+```{python}
+map_summary = pd.DataFrame(
+    [
+        {
+            "metric_group": group_key,
+            "map_title": group_spec["title"],
+            "html_file": group_spec["filename"],
+            "bubble_metrics_included": ", ".join(group_spec["available_bubbles"]),
+        }
+        for group_key, group_spec in AVAILABLE_MAP_GROUPS.items()
+    ]
+)
+display(map_summary)
 
-    m = make_base_map(tracts)
+missing_summary = pd.DataFrame(
+    [
+        {
+            "metric_group": group_key,
+            "expected_html_file": group_spec["filename"],
+            "target_metrics": ", ".join(group_spec["bubble_metrics"]),
+            "status": "missing because all target fields are absent or null",
+        }
+        for group_key, group_spec in MAP_GROUPS.items()
+        if group_key not in AVAILABLE_MAP_GROUPS
+    ]
+)
+display(missing_summary)
 
-    add_metric_layer(
-        m,
-        tracts,
-        metric,
-        spec,
-        show=True,
-        overlay=False,
-    )
+expected_files = [MAP_OUTPUT_DIR / spec["filename"] for spec in AVAILABLE_MAP_GROUPS.values()]
+for path in expected_files:
+    assert path.exists(), path
+    assert path.stat().st_size > 10_000, path
 
-    display(m)
+print(f"Wrote {len(expected_files)} metric-group HTML files to {MAP_OUTPUT_DIR}")
+for path in expected_files:
+    print(f"  {path.relative_to(PROJECT_DIR)}")
 ```
