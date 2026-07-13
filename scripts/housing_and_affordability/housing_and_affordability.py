@@ -1,6 +1,8 @@
 """Build the CB3 Housing & Affordability tract-level metrics table.
 It uses only local project data and writes:
-    data/clean/housing_and_affordability.csv
+    data/clean/housing_and_affordability_tract.csv
+    data/clean/housing_and_affordability_subsidized_points.csv
+    data/clean/housing_and_affordability_new_construction_points.csv
 """
 
 # Import the packages used for tabular, spatial, PDF, and file processing.
@@ -20,6 +22,7 @@ import geopandas as gpd
 from pypdf import PdfReader
 
 from src.cb3_utils import (
+    add_polygon_centroids,
     assign_points_to_cb3_tract,
     extract_year,
     load_cb3_acs,
@@ -35,7 +38,7 @@ GEOGRAPHY_DIR = PROJECT_DIR / "data" / "raw" / "Geography"
 RELATIONSHIP_DIR = GEOGRAPHY_DIR / "GeographicRelationshipFiles"
 FURMAN_DIR = RAW_DIR / "FC_Subsidized_Housing_Database_2025-05-13"
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
-OUTPUT_PATH = CLEAN_DIR / "housing_and_affordability.csv"
+OUTPUT_PATH = CLEAN_DIR / "housing_and_affordability_tract.csv"
 LOG_PATH = CLEAN_DIR / "housing_and_affordability_log.txt"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -345,6 +348,28 @@ subsidized_metrics = (
     )
 )
 
+# Building-level export for point/bubble maps: one row per at-risk property,
+# keeping its own coordinates rather than collapsing to the tract centroid.
+SUBSIDIZED_POINTS_PATH = CLEAN_DIR / "housing_and_affordability_subsidized_points.csv"
+subsidized_points = furman_bbl_mapped[
+    (furman_bbl_mapped["subsidized_units_expiring_2025_2030"] > 0)
+    | (furman_bbl_mapped["subsidized_units_expiring_2031_2040"] > 0)
+][
+    [
+        "bbl",
+        "standard_address",
+        "GEOID",
+        "latitude",
+        "longitude",
+        "subsidized_units_expiring_2025_2030",
+        "subsidized_units_expiring_2031_2040",
+    ]
+].reset_index(drop=True)
+subsidized_points.to_csv(SUBSIDIZED_POINTS_PATH, index=False)
+print(
+    f"Wrote {len(subsidized_points)} at-risk building points to {SUBSIDIZED_POINTS_PATH}"
+)
+
 # Preserve the published Furman community-district expiration totals as context.
 # The property-level unit method does not reproduce the published district series,
 # so the published totals are not divided across individual tracts.
@@ -397,6 +422,27 @@ recent_construction["new_affordable_properties_since_2018"] = 1
 construction_metrics = recent_construction.groupby("GEOID", as_index=False)[
     ["new_affordable_properties_since_2018", "new_affordable_units_since_2018"]
 ].sum()
+
+# Building-level export for point/bubble maps: one row per new-construction
+# property, keeping its own coordinates rather than collapsing to the tract
+# centroid. Coordinates/address come from the BBL-level file via ref_bbl.
+NEW_CONSTRUCTION_POINTS_PATH = (
+    CLEAN_DIR / "housing_and_affordability_new_construction_points.csv"
+)
+new_construction_points = recent_construction.merge(
+    furman_bbl_mapped[["bbl", "standard_address", "latitude", "longitude"]].rename(
+        columns={"bbl": "ref_bbl"}
+    ),
+    on="ref_bbl",
+    how="left",
+    validate="one_to_one",
+).rename(columns={"ref_bbl": "bbl"})[
+    ["bbl", "standard_address", "GEOID", "latitude", "longitude", "new_affordable_units_since_2018"]
+]
+new_construction_points.to_csv(NEW_CONSTRUCTION_POINTS_PATH, index=False)
+print(
+    f"Wrote {len(new_construction_points)} new-construction building points to {NEW_CONSTRUCTION_POINTS_PATH}"
+)
 
 
 # Housing-related health conditions
@@ -570,6 +616,14 @@ clean = clean.sort_values("GEOID").reset_index(drop=True)
 assert len(clean) == 31
 assert clean["GEOID"].is_unique
 assert clean["GEOID"].str.fullmatch(r"\d{11}").all()
+
+# Attach each tract's polygon centroid so tract-level metrics (e.g. severe rent
+# burden, crowding) can still be placed as a single point on point/bubble map
+# layers, in the absence of building-level coordinates.
+clean = add_polygon_centroids(
+    clean, cb3_tract_geometry, "GEOID",
+    lat_col="tract_centroid_latitude", lon_col="tract_centroid_longitude",
+)
 
 clean.to_csv(OUTPUT_PATH, index=False)
 print(f"Wrote {len(clean)} rows and {len(clean.columns)} columns to {OUTPUT_PATH}")

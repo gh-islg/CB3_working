@@ -159,6 +159,54 @@ def assign_points_to_cb3_tract(
     return assigned
 
 
+def add_polygon_centroids(
+    frame,
+    polygons,
+    id_column,
+    lat_col="centroid_latitude",
+    lon_col="centroid_longitude",
+    projected_crs="EPSG:2263",
+    validate="one_to_one",
+):
+    """Attach each row's polygon centroid as latitude/longitude columns.
+
+    Works for any polygon geography keyed by an id column (census tract
+    GEOID, ZCTA5, NTA code, etc.), so metrics reported at that geography can
+    still be placed as a single point on a point/bubble map layer, in the
+    absence of native coordinates (e.g. individual building addresses).
+    Centroids are computed in a projected CRS (EPSG:2263, NY State Plane feet,
+    by default) for accuracy, then converted back to EPSG:4326 lat/lon.
+
+    Parameters
+    ----------
+    frame : DataFrame
+        Metric table with one row per ``id_column`` value to attach centroids to.
+    polygons : GeoDataFrame
+        Must contain ``id_column`` and ``geometry``.
+    id_column : str
+        Shared key between ``frame`` and ``polygons`` (e.g. "GEOID", "ZCTA5", "NTACode").
+    lat_col, lon_col : str
+        Names for the new centroid columns.
+    projected_crs : str
+        CRS used for centroid calculation; should be equal-area/equidistant
+        for the region, not a geographic (lat/lon) CRS.
+    validate : str
+        Passed to ``DataFrame.merge``; use "many_to_one" if ``frame`` has
+        multiple rows per polygon (e.g. building-level records).
+    """
+    centroids = polygons.to_crs(projected_crs).geometry.centroid.to_crs("EPSG:4326")
+    centroid_lookup = polygons[[id_column]].copy()
+    centroid_lookup[lon_col] = centroids.x.values
+    centroid_lookup[lat_col] = centroids.y.values
+
+    return frame.merge(
+        centroid_lookup,
+        on=id_column,
+        how="left",
+        validate=validate,
+    )
+
+
 def load_cb3_acs(filename, raw_dir, CB3_TRACT_CODES):
     """Load and filter an ACS table to the 31-tract CB3 universe."""
     frame = clean_census_values(pd.read_csv(raw_dir / filename, low_memory=False))
