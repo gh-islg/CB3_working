@@ -1,9 +1,10 @@
 ---
-title: "CB3 Equity Report — Language Maps"
+title: "CB3 Equity Report — Language Access Map"
 format:
   html:
     toc: true
     code-fold: true
+    embed-resources: true
 execute:
   echo: true
   warning: false
@@ -11,782 +12,265 @@ execute:
 jupyter: python3
 ---
 
-## Purpose
-
-Render Language-domain maps with the same user-facing pattern as the Health-domain maps:
-
-- right-side radio buttons for demographic tract-color background layers;
-- right-side checkboxes for Language metric bubble overlays;
-- exact Language metric values on bubble hover.
-
-This file uses `map_utils.py` for the shared base map and title, but creates a custom always-visible layer panel because the default Folium layer control was not showing reliably in this branch.
-
 ```{python}
 from pathlib import Path
-import html
-import json
 import sys
 
-import branca.colormap as cm
-import folium
 import geopandas as gpd
-import numpy as np
 import pandas as pd
+import yaml
+from shapely import wkt
 
-for candidate in [Path.cwd(), *Path.cwd().parents]:
-    if (candidate / "src" / "map_utils.py").exists():
-        sys.path.insert(0, str(candidate))
-        break
+PROJECT_DIR = Path.cwd()
+while not (PROJECT_DIR / "src").exists() and PROJECT_DIR != PROJECT_DIR.parent:
+    PROJECT_DIR = PROJECT_DIR.parent
 
-from src.cb3_utils import load_cb3_tract_universe
-from src.map_utils import find_project_dir, make_base_map, add_map_title
-```
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
 
-```{python}
+from src.map_utils import (
+    build_grouped_bubble_map,
+    find_project_dir,
+    format_metric_value,
+)
+
 PROJECT_DIR = find_project_dir()
-CLEAN_DIR = PROJECT_DIR / "data" / "clean"
-MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "language"
-MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+CLEAN_PATH = PROJECT_DIR / "data" / "clean" / "language.csv"
+METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
+OUTPUT_DIR = PROJECT_DIR / "maps" / "language"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-LANGUAGE_PATH = CLEAN_DIR / "language.csv"
+OUTPUT_PATH = OUTPUT_DIR / "language_access_lep_households_by_group.html"
 
-BASELINE_CANDIDATES = [
-    CLEAN_DIR / "tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk_clean.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "baseline" / "tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "baseline" / "tract_baseline_profile_partial_before_crosswalk.csv",
+EXCLUDED_DEMOGRAPHIC_METRICS = {"senior_poverty_rate"}
+
+# These are the C16002 household language groups prepared by scripts/language/build.py.
+# They become separate bubble layers on one shared map.
+LANGUAGE_GROUP_METRICS = [
+    "spanish_limited_english_household_share",
+    "other_indo_european_limited_english_household_share",
+    "asian_pacific_limited_english_household_share",
+    "other_languages_limited_english_household_share",
 ]
-```
 
-## Load data
-
-```{python}
-LANGUAGE_METADATA = {
-    "asian_pacific_limited_english_household_share": {
-        "short_label": "Asian/Pacific Island language LEP households",
-        "label": "Share of households that speak Asian or Pacific Island languages and have limited English-speaking status",
-        "filename": "asian_pacific_limited_english_household_share.html",
-        "count_col": "asian_pacific_limited_english_households",
-        "denominator_col": "households_language_universe",
-        "count_label": "Asian/Pacific Island language LEP households",
-        "denominator_label": "Household universe",
-        "unit": "%",
-    },
-    "spanish_limited_english_household_share": {
-        "short_label": "Spanish-speaking LEP households",
-        "label": "Share of households that speak Spanish and have limited English-speaking status",
-        "filename": "spanish_limited_english_household_share.html",
-        "count_col": "spanish_limited_english_households",
-        "denominator_col": "households_language_universe",
-        "count_label": "Spanish-speaking LEP households",
-        "denominator_label": "Household universe",
-        "unit": "%",
-    },
-    "lep_household_share": {
-        "short_label": "Limited-English-proficient households",
-        "label": "Share of households with limited English-speaking status",
-        "filename": "aggregate_limited_english_household_share.html",
-        "count_col": "lep_households",
-        "denominator_col": "households_language_universe",
-        "count_label": "LEP households",
-        "denominator_label": "Household universe",
-        "unit": "%",
-    },
-    "other_indo_european_limited_english_household_share": {
-        "short_label": "Other Indo-European language LEP households",
-        "label": "Share of households that speak other Indo-European languages and have limited English-speaking status",
-        "filename": "other_indo_european_limited_english_household_share.html",
-        "count_col": "other_indo_european_limited_english_households",
-        "denominator_col": "households_language_universe",
-        "count_label": "Other Indo-European language LEP households",
-        "denominator_label": "Household universe",
-        "unit": "%",
-    },
-    "other_languages_limited_english_household_share": {
-        "short_label": "Other language LEP households",
-        "label": "Share of households that speak other languages and have limited English-speaking status",
-        "filename": "other_languages_limited_english_household_share.html",
-        "count_col": "other_languages_limited_english_households",
-        "denominator_col": "households_language_universe",
-        "count_label": "Other-language LEP households",
-        "denominator_label": "Household universe",
-        "unit": "%",
-    },
-}
-
-DEMOGRAPHIC_METADATA = {
-    "median_household_income": {"short_label": "Median household income", "label": "Median household income", "unit": "$"},
-    "age_0_to_19_share": {"short_label": "Age 0-19", "label": "Share of residents age 0 to 19", "unit": "%"},
-    "age_20_to_64_share": {"short_label": "Age 20-64", "label": "Share of residents age 20 to 64", "unit": "%"},
-    "age_65_plus_share": {"short_label": "Age 65+", "label": "Share of residents age 65 or older", "unit": "%"},
-    "white_non_hispanic_share": {"short_label": "White non-Hispanic share", "label": "Share of residents who are White non-Hispanic", "unit": "%"},
-    "black_non_hispanic_share": {"short_label": "Black non-Hispanic share", "label": "Share of residents who are Black non-Hispanic", "unit": "%"},
-    "asian_non_hispanic_share": {"short_label": "Asian non-Hispanic share", "label": "Share of residents who are Asian non-Hispanic", "unit": "%"},
-    "hispanic_share": {"short_label": "Hispanic share", "label": "Share of residents who are Hispanic or Latino", "unit": "%"},
-    "poverty_rate": {"short_label": "Poverty rate", "label": "Share of residents below poverty", "unit": "%"},
-    "lep_household_share": {"short_label": "Limited-English-proficient households", "label": "Share of households with limited English-speaking status", "unit": "%"},
-}
-
-LANGUAGE_METRICS = list(LANGUAGE_METADATA.keys())
-
-DEMOGRAPHIC_LAYER_CANDIDATES = [
-    "median_household_income",
-    "age_0_to_19_share",
-    "age_20_to_64_share",
-    "age_65_plus_share",
-    "white_non_hispanic_share",
-    "black_non_hispanic_share",
-    "asian_non_hispanic_share",
-    "hispanic_share",
-    "poverty_rate",
+# Total LEP household share stays available as tooltip context.
+TOTAL_LANGUAGE_CONTEXT_METRICS = [
     "lep_household_share",
+    "lep_households",
+    "households_language_universe",
 ]
 ```
 
 ```{python}
-def normalize_geoid(series):
-    return series.astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(11)
+def to_map_spec(metric, meta, include_filename=False):
+    """Convert metric_metadata.yml entries into the spec expected by map_utils."""
+    spec = {
+        "dimension": meta.get("short_label", metric.replace("_", " ").title()),
+        "label": meta.get("label", meta.get("short_label", metric.replace("_", " ").title())),
+        "unit": meta.get("unit", ""),
+    }
+
+    if "palette" in meta:
+        spec["palette"] = meta["palette"]
+
+    if include_filename:
+        spec["filename"] = meta.get("filename", f"{metric}.html")
+
+    for optional_key in ("positive_values_only", "zero_color", "zero_label"):
+        if optional_key in meta:
+            spec[optional_key] = meta[optional_key]
+
+    return spec
 
 
-def add_geoid(df):
-    if "GEOID" in df.columns:
-        df["GEOID"] = normalize_geoid(df["GEOID"])
-        return df
-    if "geoid" in df.columns:
-        df = df.rename(columns={"geoid": "GEOID"})
-        df["GEOID"] = normalize_geoid(df["GEOID"])
-        return df
-    if "GEOID20" in df.columns:
-        df = df.rename(columns={"GEOID20": "GEOID"})
-        df["GEOID"] = normalize_geoid(df["GEOID"])
-        return df
-    if {"state", "county", "tract"}.issubset(df.columns):
-        df["GEOID"] = (
-            df["state"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(2)
-            + df["county"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(3)
-            + df["tract"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(6)
-        )
-        return df
-    raise KeyError(f"Could not create GEOID from columns: {list(df.columns)}")
+with open(METADATA_PATH, encoding="utf-8") as f:
+    all_metrics = yaml.safe_load(f) or {}
 
-
-def load_demographic_baseline():
-    for path in BASELINE_CANDIDATES:
-        if not path.exists():
-            continue
-
-        df = pd.read_csv(path, dtype={"GEOID": "string", "geoid": "string", "GEOID20": "string"})
-        df = add_geoid(df)
-        available = [col for col in DEMOGRAPHIC_LAYER_CANDIDATES if col in df.columns]
-
-        if available:
-            print(f"Using demographic baseline: {path}")
-            print(f"Demographic columns found: {available}")
-            out = df[["GEOID"] + available].copy()
-            for col in available:
-                out[col] = pd.to_numeric(out[col], errors="coerce")
-            return out
-
-        print(f"Found baseline candidate but no expected demographic columns: {path}")
-
-    print("No usable demographic baseline found. Checked:")
-    for path in BASELINE_CANDIDATES:
-        print(f"  {path}")
-    return pd.DataFrame(columns=["GEOID"])
-```
-
-```{python}
-language = pd.read_csv(LANGUAGE_PATH, dtype={"GEOID": "string"})
-language = add_geoid(language)
-
-baseline = load_demographic_baseline()
-
-tract_universe, cb3_geometry, _, _ = load_cb3_tract_universe(PROJECT_DIR)
-tract_universe["GEOID"] = normalize_geoid(tract_universe["GEOID"])
-cb3_geometry["GEOID"] = normalize_geoid(cb3_geometry["GEOID"])
-
-tracts = cb3_geometry.merge(
-    tract_universe.drop(columns="geometry", errors="ignore"),
-    on="GEOID",
-    how="left",
-    validate="one_to_one",
-)
-
-tracts = tracts.merge(
-    language[[col for col in language.columns if col == "GEOID" or col not in tracts.columns]],
-    on="GEOID",
-    how="left",
-    validate="one_to_one",
-)
-
-if not baseline.empty:
-    tracts = tracts.merge(
-        baseline[[col for col in baseline.columns if col == "GEOID" or col not in tracts.columns]],
-        on="GEOID",
-        how="left",
-        validate="one_to_one",
-    )
-
-tracts = tracts.to_crs("EPSG:4326")
-
-for col in tracts.columns:
-    if col != "geometry" and col not in ["GEOID", "NAME", "nta_name", "nta_code", "cdta_name", "cdta_code", "tract_name"]:
-        tracts[col] = pd.to_numeric(tracts[col], errors="ignore")
-
-for metric in LANGUAGE_METRICS:
-    if metric not in tracts.columns:
-        raise KeyError(f"Missing required Language metric column: {metric}")
-    tracts[metric] = pd.to_numeric(tracts[metric], errors="coerce")
-
-DEMOGRAPHIC_LAYERS = [
-    metric for metric in DEMOGRAPHIC_LAYER_CANDIDATES
-    if metric in tracts.columns and pd.to_numeric(tracts[metric], errors="coerce").notna().any()
-]
-
-for metric in DEMOGRAPHIC_LAYERS:
-    tracts[metric] = pd.to_numeric(tracts[metric], errors="coerce")
-
-assert len(tracts) == 31
-assert tracts["GEOID"].is_unique
-
-print(f"Rows: {len(tracts)}")
-print("Language bubble overlays:")
-for metric in LANGUAGE_METRICS:
-    print(f"  {metric}: {tracts[metric].notna().sum()} non-null")
-
-print("Demographic side-panel options:")
-if DEMOGRAPHIC_LAYERS:
-    for metric in DEMOGRAPHIC_LAYERS:
-        print(f"  {metric}: {tracts[metric].notna().sum()} non-null")
-else:
-    print("  none")
-```
-
-## Map helpers
-
-```{python}
-BACKGROUND_PALETTE = ["#fff7fb", "#ece2f0", "#d0d1e6", "#a6bddb", "#67a9cf", "#1c9099", "#016c59"]
-BUBBLE_COLOR = "#111111"
-BUBBLE_FILL = "#111111"
-
-
-def _meta(metric):
-    return LANGUAGE_METADATA.get(metric) or DEMOGRAPHIC_METADATA.get(metric) or {}
-
-
-def _metric_label(metric):
-    return _meta(metric).get("label", metric)
-
-
-def _metric_short_label(metric):
-    return _meta(metric).get("short_label", metric)
-
-
-def _metric_unit(metric):
-    return _meta(metric).get("unit", "%")
-
-
-def _format_value(value, unit="%"):
-    if pd.isna(value):
-        return "Not available"
-    if unit == "%":
-        return f"{value:.1f}%"
-    if unit == "$":
-        return f"${value:,.0f}"
-    if unit == "count":
-        return f"{value:,.0f}"
-    return f"{value:.1f} {unit}".strip()
-
-
-def _classification_breaks(values, bins=5):
-    valid = pd.Series(values).dropna()
-    valid = valid[valid >= 0]
-    if valid.empty:
-        return [0, 1]
-    if valid.nunique() <= bins:
-        breaks = sorted(valid.unique())
+# Build specs for the specific language group metrics only.
+language_group_specs = {}
+for metric in LANGUAGE_GROUP_METRICS:
+    meta = all_metrics.get(metric)
+    if isinstance(meta, dict):
+        language_group_specs[metric] = to_map_spec(metric, meta, include_filename=True)
     else:
-        breaks = list(valid.quantile(np.linspace(0, 1, bins + 1)).values)
-    breaks = sorted(set(float(x) for x in breaks if pd.notna(x)))
-    if len(breaks) == 1:
-        breaks = [0.0, breaks[0]] if breaks[0] > 0 else [0.0, 1.0]
-    cleaned = [breaks[0]]
-    for value in breaks[1:]:
-        if value <= cleaned[-1]:
-            value = cleaned[-1] + 1e-9
-        cleaned.append(value)
-    return cleaned
-
-
-def _prep_display_columns(geodata, metric):
-    plot_data = geodata.copy()
-    unit = _metric_unit(metric)
-    count_col = _meta(metric).get("count_col")
-    denominator_col = _meta(metric).get("denominator_col")
-
-    plot_data[metric] = pd.to_numeric(plot_data[metric], errors="coerce")
-    plot_data[f"{metric}_display"] = plot_data[metric].apply(lambda v: _format_value(v, unit))
-
-    if count_col and count_col in plot_data.columns:
-        plot_data[count_col] = pd.to_numeric(plot_data[count_col], errors="coerce")
-        plot_data[f"{count_col}_display"] = plot_data[count_col].apply(lambda v: _format_value(v, "count"))
-
-    if denominator_col and denominator_col in plot_data.columns:
-        plot_data[denominator_col] = pd.to_numeric(plot_data[denominator_col], errors="coerce")
-        plot_data[f"{denominator_col}_display"] = plot_data[denominator_col].apply(lambda v: _format_value(v, "count"))
-
-    return plot_data
-```
-
-```{python}
-def add_demographic_layer(map_object, geodata, metric):
-    label = _metric_short_label(metric)
-    plot_data = geodata.copy()
-    plot_data[metric] = pd.to_numeric(plot_data[metric], errors="coerce")
-
-    breaks = _classification_breaks(plot_data[metric], bins=5)
-    colors = BACKGROUND_PALETTE[: max(2, len(breaks) - 1)]
-    if len(colors) < len(breaks) - 1:
-        colors = BACKGROUND_PALETTE
-
-    color_map = cm.StepColormap(colors=colors, index=breaks, vmin=breaks[0], vmax=breaks[-1])
-
-    def style_function(feature):
-        value = feature["properties"].get(metric)
-        fill_color = "#f7f7f7" if value is None or pd.isna(value) else color_map(value)
-        return {
-            "fillColor": fill_color,
-            "color": "#4d4d4d",
-            "weight": 1.1,
-            "fillOpacity": 0.72,
+        # Fallback so the map can still run if a context metric is present in
+        # language.csv but not yet documented in metadata.
+        language_group_specs[metric] = {
+            "dimension": metric.replace("_", " ").replace("Limited English Household Share", "LEP household share").title(),
+            "label": metric.replace("_", " ").title(),
+            "unit": "%",
+            "filename": OUTPUT_PATH.name,
         }
 
-    group = folium.FeatureGroup(name=label, show=False, control=False)
-    folium.GeoJson(plot_data, interactive=False, style_function=style_function).add_to(group)
-    group.add_to(map_object)
-    return {"label": label, "js_name": group.get_name(), "metric": metric}
+demographic_specs = {
+    metric: to_map_spec(metric, meta)
+    for metric, meta in all_metrics.items()
+    if isinstance(meta, dict)
+    and meta.get("domain") == "demographics"
+    and metric not in EXCLUDED_DEMOGRAPHIC_METRICS
+}
 
+if not demographic_specs:
+    raise ValueError("No demographic metrics found in metric_metadata.yml.")
 
-def add_no_background_layer(map_object, geodata):
-    group = folium.FeatureGroup(name="No demographic background", show=False, control=False)
-    folium.GeoJson(
-        geodata,
-        interactive=False,
-        style_function=lambda feature: {
-            "fillColor": "#ffffff",
-            "color": "#4d4d4d",
-            "weight": 1.0,
-            "fillOpacity": 0.0,
-        },
-    ).add_to(group)
-    group.add_to(map_object)
-    return {"label": "No demographic background", "js_name": group.get_name(), "metric": "__none__"}
+print("Language group bubble metrics:")
+for metric in language_group_specs:
+    print(f"  {metric}")
 
-
-def add_tract_outline_layer(map_object, geodata):
-    group = folium.FeatureGroup(name="CB3 census tract outlines", show=True, control=False)
-    folium.GeoJson(
-        geodata,
-        interactive=False,
-        style_function=lambda feature: {
-            "fillColor": "transparent",
-            "color": "#333333",
-            "weight": 1.4,
-            "fillOpacity": 0,
-        },
-    ).add_to(group)
-    group.add_to(map_object)
-    return {"label": "CB3 census tract outlines", "js_name": group.get_name()}
-
-
-def add_language_bubble_layer(map_object, geodata, metric, show=True):
-    meta = _meta(metric)
-    label = _metric_short_label(metric)
-    count_col = meta.get("count_col")
-    denominator_col = meta.get("denominator_col")
-    count_label = meta.get("count_label", "Count")
-    denominator_label = meta.get("denominator_label", "Denominator")
-
-    plot_data = _prep_display_columns(geodata, metric)
-
-    if count_col and count_col in plot_data.columns:
-        size_values = pd.to_numeric(plot_data[count_col], errors="coerce").fillna(0)
-    else:
-        size_values = pd.to_numeric(plot_data[metric], errors="coerce").fillna(0)
-
-    max_size_value = max(float(size_values.max(skipna=True)), 1.0)
-
-    projected = plot_data.to_crs("EPSG:2263")
-    points = projected.copy()
-    points["geometry"] = points.geometry.representative_point()
-    points = points.to_crs("EPSG:4326")
-
-    group = folium.FeatureGroup(name=f"{label} bubbles", show=show, control=False)
-
-    for _, row in points.iterrows():
-        share_value = row.get(metric)
-        if pd.isna(share_value):
-            continue
-
-        count_value = row.get(count_col) if count_col in points.columns else np.nan
-        size_source = count_value if pd.notna(count_value) else share_value
-        radius = 4 + 13 * np.sqrt(max(float(size_source), 0) / max_size_value)
-
-        tooltip_lines = [
-            f"<b>Tract:</b> {row.get('tract_label', row.get('GEOID', ''))}",
-            f"<b>NTA:</b> {row.get('nta_name', '')}",
-            f"<b>{label}:</b> {row.get(f'{metric}_display', _format_value(share_value, '%'))}",
-        ]
-        if count_col and f"{count_col}_display" in row:
-            tooltip_lines.append(f"<b>{count_label}:</b> {row.get(f'{count_col}_display')}")
-        if denominator_col and f"{denominator_col}_display" in row:
-            tooltip_lines.append(f"<b>{denominator_label}:</b> {row.get(f'{denominator_col}_display')}")
-
-        tooltip_html = "<br>".join(tooltip_lines)
-
-        folium.CircleMarker(
-            location=[row.geometry.y, row.geometry.x],
-            radius=radius,
-            color=BUBBLE_COLOR,
-            weight=1.4,
-            fill=True,
-            fill_color=BUBBLE_FILL,
-            fill_opacity=0.38,
-            opacity=0.72,
-            tooltip=folium.Tooltip(tooltip_html, sticky=True),
-            popup=folium.Popup(tooltip_html, max_width=320),
-        ).add_to(group)
-
-    group.add_to(map_object)
-    return {"label": f"{label} bubbles", "js_name": group.get_name(), "metric": metric, "show": show}
+print("\nDemographic backdrop metrics:")
+for metric in demographic_specs:
+    print(f"  {metric}")
 ```
 
-```{python}
-def add_custom_side_panel(map_object, demographic_layers, bubble_layers, outline_layer, default_demographic_index=0):
-    map_name = map_object.get_name()
-
-    demo_html = []
-    for i, layer in enumerate(demographic_layers):
-        checked = "checked" if i == default_demographic_index else ""
-        demo_html.append(
-            f"""
-            <label class="cb3-layer-option">
-              <input type="radio" name="cb3-demographic-bg" value="{i}" {checked}>
-              {html.escape(layer["label"])}
-            </label>
-            """
-        )
-
-    bubble_html = []
-    for i, layer in enumerate(bubble_layers):
-        checked = "checked" if layer.get("show") else ""
-        bubble_html.append(
-            f"""
-            <label class="cb3-layer-option">
-              <input type="checkbox" class="cb3-bubble-toggle" value="{i}" {checked}>
-              {html.escape(layer["label"])}
-            </label>
-            """
-        )
-
-    panel_html = f"""
-    <div id="cb3-custom-layer-panel" class="cb3-layer-panel">
-      <div class="cb3-layer-section">
-        {''.join(demo_html)}
-      </div>
-      <hr>
-      <div class="cb3-layer-section">
-        <label class="cb3-layer-option">
-          <input type="checkbox" id="cb3-outline-toggle" checked>
-          {html.escape(outline_layer["label"])}
-        </label>
-        {''.join(bubble_html)}
-      </div>
-    </div>
-    """
-
-    css = """
-    <style>
-      #cb3-custom-layer-panel {
-        position: fixed !important;
-        top: 12px !important;
-        right: 12px !important;
-        z-index: 2147483647 !important;
-        background: rgba(255,255,255,0.97) !important;
-        border: 2px solid #888 !important;
-        border-radius: 6px !important;
-        padding: 10px 12px !important;
-        min-width: 330px !important;
-        max-width: 390px !important;
-        max-height: 80vh !important;
-        overflow-y: auto !important;
-        font-family: Arial, sans-serif !important;
-        font-size: 15px !important;
-        line-height: 1.35 !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important;
-      }
-      #cb3-custom-layer-panel .cb3-layer-option {
-        display: block !important;
-        margin: 5px 0 !important;
-        color: #222 !important;
-        white-space: normal !important;
-      }
-      #cb3-custom-layer-panel input {
-        margin-right: 7px !important;
-        transform: scale(1.15);
-      }
-      #cb3-custom-layer-panel hr {
-        border: none !important;
-        border-top: 1px solid #ccc !important;
-        margin: 8px 0 !important;
-      }
-      .leaflet-tooltip {
-        z-index: 2147483647 !important;
-      }
-    </style>
-    """
-
-    demo_js_entries = ",\n".join(
-        [f'{{label: {json.dumps(layer["label"])}, layer: {layer["js_name"]}}}' for layer in demographic_layers]
-    )
-    bubble_js_entries = ",\n".join(
-        [f'{{label: {json.dumps(layer["label"])}, layer: {layer["js_name"]}}}' for layer in bubble_layers]
-    )
-
-    js = f"""
-    <script>
-    (function() {{
-      function setupCB3Panel() {{
-        var map = {map_name};
-        var demoLayers = [{demo_js_entries}];
-        var bubbleLayers = [{bubble_js_entries}];
-        var outlineLayer = {outline_layer["js_name"]};
-
-        function setDemoLayer(index) {{
-          demoLayers.forEach(function(item) {{
-            if (map.hasLayer(item.layer)) {{
-              map.removeLayer(item.layer);
-            }}
-          }});
-          if (demoLayers[index]) {{
-            demoLayers[index].layer.addTo(map);
-          }}
-        }}
-
-        function setBubbleLayer(index, visible) {{
-          if (!bubbleLayers[index]) return;
-          var layer = bubbleLayers[index].layer;
-          if (visible) {{
-            if (!map.hasLayer(layer)) layer.addTo(map);
-          }} else {{
-            if (map.hasLayer(layer)) map.removeLayer(layer);
-          }}
-        }}
-
-        var demoInputs = document.querySelectorAll('input[name="cb3-demographic-bg"]');
-        demoInputs.forEach(function(input) {{
-          input.addEventListener('change', function(e) {{
-            setDemoLayer(parseInt(e.target.value));
-          }});
-        }});
-
-        var bubbleInputs = document.querySelectorAll('.cb3-bubble-toggle');
-        bubbleInputs.forEach(function(input) {{
-          input.addEventListener('change', function(e) {{
-            setBubbleLayer(parseInt(e.target.value), e.target.checked);
-          }});
-        }});
-
-        var outlineInput = document.getElementById('cb3-outline-toggle');
-        if (outlineInput) {{
-          outlineInput.addEventListener('change', function(e) {{
-            if (e.target.checked) {{
-              if (!map.hasLayer(outlineLayer)) outlineLayer.addTo(map);
-            }} else {{
-              if (map.hasLayer(outlineLayer)) map.removeLayer(outlineLayer);
-            }}
-          }});
-        }}
-
-        var checkedDemo = document.querySelector('input[name="cb3-demographic-bg"]:checked');
-        if (checkedDemo) {{
-          setDemoLayer(parseInt(checkedDemo.value));
-        }}
-      }}
-
-      if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', setupCB3Panel);
-      }} else {{
-        setupCB3Panel();
-      }}
-    }})();
-    </script>
-    """
-
-    map_object.get_root().html.add_child(folium.Element(css + panel_html + js))
-    return map_object
-```
+## Load prepared clean map file
 
 ```{python}
-def save_language_map(metric, title, subtitle, output_filename=None):
-    filename = output_filename or LANGUAGE_METADATA[metric].get("filename", f"{metric}.html")
-    output_path = MAP_OUTPUT_DIR / filename
-
-    map_object = make_base_map(tracts)
-
-    demographic_layers = []
-    for metric_name in DEMOGRAPHIC_LAYER_CANDIDATES:
-        if metric_name in DEMOGRAPHIC_LAYERS:
-            demographic_layers.append(add_demographic_layer(map_object, tracts, metric_name))
-    demographic_layers.append(add_no_background_layer(map_object, tracts))
-
-    outline_layer = add_tract_outline_layer(map_object, tracts)
-    bubble_layers = [add_language_bubble_layer(map_object, tracts, metric, show=True)]
-
-    default_idx = 0
-    for i, layer in enumerate(demographic_layers):
-        if layer["metric"] == "white_non_hispanic_share":
-            default_idx = i
-
-    add_map_title(map_object, title, subtitle)
-    add_custom_side_panel(map_object, demographic_layers, bubble_layers, outline_layer, default_demographic_index=default_idx)
-
-    map_object.save(output_path)
-    print(f"Saved {output_path}")
-    return map_object
-
-
-def save_combined_language_layer_map():
-    output_path = MAP_OUTPUT_DIR / "language_household_lep_layers.html"
-
-    map_object = make_base_map(tracts)
-
-    demographic_layers = []
-    for metric_name in DEMOGRAPHIC_LAYER_CANDIDATES:
-        if metric_name in DEMOGRAPHIC_LAYERS:
-            demographic_layers.append(add_demographic_layer(map_object, tracts, metric_name))
-    demographic_layers.append(add_no_background_layer(map_object, tracts))
-
-    outline_layer = add_tract_outline_layer(map_object, tracts)
-
-    bubble_layers = []
-    for i, metric_name in enumerate(LANGUAGE_METRICS):
-        bubble_layers.append(add_language_bubble_layer(map_object, tracts, metric_name, show=(i == 0)))
-
-    default_idx = 0
-    for i, layer in enumerate(demographic_layers):
-        if layer["metric"] == "white_non_hispanic_share":
-            default_idx = i
-
-    add_map_title(
-        map_object,
-        "CB3 Language: household limited-English patterns",
-        "Bubbles show language-access metrics; tract colors show selectable demographic context. Hover over bubbles for exact values.",
+if not CLEAN_PATH.exists():
+    raise FileNotFoundError(
+        f"Could not find {CLEAN_PATH}. Run scripts/language/build.py first."
     )
-    add_custom_side_panel(map_object, demographic_layers, bubble_layers, outline_layer, default_demographic_index=default_idx)
 
-    map_object.save(output_path)
-    print(f"Saved {output_path}")
-    return map_object
-```
+clean = pd.read_csv(CLEAN_PATH, dtype={"GEOID": "string"}, low_memory=False)
 
-## Primary maps
+required_columns = {
+    "GEOID",
+    "tract_label",
+    "nta_name",
+    "tract_centroid_latitude",
+    "tract_centroid_longitude",
+    "geometry_wkt",
+}
+missing_required = sorted(required_columns - set(clean.columns))
+if missing_required:
+    raise ValueError(
+        "language.csv is not map-ready. Missing columns: "
+        + ", ".join(missing_required)
+        + ". Re-run the refactored scripts/language/build.py."
+    )
 
-```{python}
-asian_pacific_map = save_language_map(
-    "asian_pacific_limited_english_household_share",
-    "CB3 Language: Asian/Pacific Island language LEP households",
-    "Bubbles show Asian/Pacific Island language LEP households; tract colors show selectable demographic context.",
+clean["GEOID"] = clean["GEOID"].astype(str).str.extract(r"(\d+)")[0].str.zfill(11)
+clean["geometry"] = clean["geometry_wkt"].map(wkt.loads)
+
+tracts = gpd.GeoDataFrame(
+    clean.drop(columns=["geometry_wkt"]),
+    geometry="geometry",
+    crs="EPSG:4326",
 )
-asian_pacific_map
-```
 
-```{python}
-spanish_map = save_language_map(
-    "spanish_limited_english_household_share",
-    "CB3 Language: Spanish-speaking LEP households",
-    "Bubbles show Spanish-speaking LEP households; tract colors show selectable demographic context.",
-)
-spanish_map
-```
+numeric_columns = set(LANGUAGE_GROUP_METRICS) | set(TOTAL_LANGUAGE_CONTEXT_METRICS) | set(demographic_specs)
+for column in numeric_columns:
+    if column in tracts.columns:
+        tracts[column] = pd.to_numeric(tracts[column], errors="coerce")
 
-## Supplementary maps
+available_language_group_specs = {
+    metric: spec
+    for metric, spec in language_group_specs.items()
+    if metric in tracts.columns and tracts[metric].notna().any()
+}
 
-```{python}
-supplementary_maps = {}
-for metric in [
-    "lep_household_share",
-    "other_indo_european_limited_english_household_share",
-    "other_languages_limited_english_household_share",
-]:
-    supplementary_maps[metric] = save_language_map(
-        metric,
-        f"CB3 Language: {_metric_short_label(metric)}",
-        "Bubbles show language-access values; tract colors show selectable demographic context.",
+available_demographic_specs = {
+    metric: spec
+    for metric, spec in demographic_specs.items()
+    if metric in tracts.columns and tracts[metric].notna().any()
+}
+
+assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
+assert tracts["GEOID"].is_unique
+
+if not available_language_group_specs:
+    raise ValueError(
+        "No LEP household language-group metrics are available in data/clean/language.csv."
     )
+
+if not available_demographic_specs:
+    raise ValueError(
+        "No demographic backdrop columns are available in data/clean/language.csv. "
+        "Make sure build.py merged a baseline file or that language.csv already contains demographics."
+    )
+
+print("Available language group bubble layers:")
+for metric, spec in available_language_group_specs.items():
+    print(f"  {metric}: {tracts[metric].notna().sum()} tracts")
+
+print("\nAvailable demographic backdrops:")
+for metric in available_demographic_specs:
+    print(f"  {metric}: {tracts[metric].notna().sum()} tracts")
 ```
 
-## Combined interactive layer map
+## Add total LEP household context to tooltip
 
 ```{python}
-combined_language_map = save_combined_language_layer_map()
-combined_language_map
+def add_display_column(source_column, label, unit):
+    display_column = f"{source_column}_display"
+    tracts[display_column] = tracts[source_column].map(
+        lambda value: format_metric_value(value, unit)
+    )
+    return display_column
+
+
+tooltip_fields = ["tract_label", "nta_name"]
+tooltip_aliases = ["Census tract", "NTA"]
+
+context_specs = {
+    "lep_household_share": ("Total LEP household share", "%"),
+    "lep_households": ("Total LEP households", ""),
+    "households_language_universe": ("Household language universe", ""),
+}
+
+for source_column, (label, unit) in context_specs.items():
+    if source_column in tracts.columns and tracts[source_column].notna().any():
+        tooltip_fields.append(add_display_column(source_column, label, unit))
+        tooltip_aliases.append(label)
+```
+
+## Render grouped Language Access map
+
+```{python}
+language_map = build_grouped_bubble_map(
+    tracts=tracts,
+    metric_specs=available_language_group_specs,
+    demographic_specs=available_demographic_specs,
+    metrics=list(available_language_group_specs),
+    title="CB3 Language Access: LEP households by language group",
+    subtitle=(
+        "Choropleth: use the layer control to pick a demographic fill. "
+        "Bubbles: selectable C16002 limited-English household language groups. "
+        "Tooltip includes total LEP household context where available."
+    ),
+    output_path=OUTPUT_PATH,
+    tooltip_fields=tooltip_fields,
+    tooltip_aliases=tooltip_aliases,
+)
+
+print(f"Saved grouped Language Access map: {OUTPUT_PATH.relative_to(PROJECT_DIR)}")
+```
+
+## Preview map
+
+```{python}
+language_map
 ```
 
 ## Validation summary
 
 ```{python}
-summary_rows = []
-for metric in LANGUAGE_METRICS:
-    meta = LANGUAGE_METADATA[metric]
-    count_col = meta.get("count_col")
-    summary_rows.append(
+summary = pd.DataFrame(
+    [
         {
             "metric": metric,
-            "label": _metric_short_label(metric),
+            "label": available_language_group_specs[metric]["label"],
             "tracts_with_data": int(tracts[metric].notna().sum()),
-            "max_tract_share": tracts[metric].max(skipna=True),
-            "total_count": tracts[count_col].sum(skipna=True) if count_col in tracts.columns else None,
+            "output_html": OUTPUT_PATH.name,
         }
-    )
+        for metric in available_language_group_specs
+    ]
+)
 
-summary = pd.DataFrame(summary_rows)
 display(summary)
 
-if DEMOGRAPHIC_LAYERS:
-    demographic_summary = pd.DataFrame(
-        [
-            {
-                "metric": metric,
-                "label": _metric_short_label(metric),
-                "tracts_with_data": int(tracts[metric].notna().sum()),
-                "min": tracts[metric].min(skipna=True),
-                "max": tracts[metric].max(skipna=True),
-            }
-            for metric in DEMOGRAPHIC_LAYERS
-        ]
-    )
-    display(demographic_summary)
-else:
-    print("No demographic layers were added. Confirm that a baseline file exists and contains demographic columns.")
-```
+assert OUTPUT_PATH.exists(), OUTPUT_PATH
+assert OUTPUT_PATH.stat().st_size > 10_000, OUTPUT_PATH
 
-```{python}
-expected_files = [
-    MAP_OUTPUT_DIR / LANGUAGE_METADATA[metric].get("filename", f"{metric}.html")
-    for metric in LANGUAGE_METRICS
-] + [
-    MAP_OUTPUT_DIR / "language_household_lep_layers.html",
-]
-
-for path in expected_files:
-    assert path.exists(), path
-    assert path.stat().st_size > 10_000, path
-
-print(f"Wrote {len(expected_files)} language map files to {MAP_OUTPUT_DIR}")
-print(f"Language bubble overlays: {len(LANGUAGE_METRICS)}")
-print(f"Demographic custom side-panel options: {len(DEMOGRAPHIC_LAYERS)}")
+print("Output file:")
+print(f"  {OUTPUT_PATH.relative_to(PROJECT_DIR)}")
 ```

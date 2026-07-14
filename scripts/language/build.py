@@ -7,7 +7,7 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from src.cb3_utils import load_cb3_tract_universe
+from src.cb3_utils import add_polygon_centroids, load_cb3_tract_universe
 
 
 RAW_DIR = PROJECT_DIR / "data" / "raw" / "Baseline"
@@ -20,8 +20,6 @@ B16001_PATH = RAW_DIR / "acs_5yr_2024_B16001.csv"
 LANGUAGE_OUT = CLEAN_DIR / "language.csv"
 LOG_OUT = CLEAN_DIR / "language_log.txt"
 
-# Look for demographic columns in the same practical places used/created by the CB3 workflow.
-# Health maps often work because one of these files is already available in the health branch/stash.
 DEMOGRAPHIC_SOURCE_CANDIDATES = [
     CLEAN_DIR / "tract_baseline_profile_clean.csv",
     CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
@@ -44,6 +42,7 @@ DEMOGRAPHIC_COLUMNS = [
     "asian_non_hispanic_share",
     "hispanic_share",
     "poverty_rate",
+    "lep_household_share",
 ]
 
 B16001_LANGUAGE_GROUPS = {
@@ -266,8 +265,44 @@ def find_demographic_source(cb3_geoids: set[str]) -> tuple[pd.DataFrame, list[st
     return pd.DataFrame({"GEOID": sorted(cb3_geoids)}), log_lines
 
 
+
+def attach_map_geometry(language: pd.DataFrame, cb3_tract_geometry) -> pd.DataFrame:
+    """Attach map-ready centroid and polygon geometry columns to language.csv.
+
+    The Language QMD should render from data/clean/language.csv only. This keeps
+    raw Geography reads in build.py and keeps maps.qmd focused on rendering.
+    """
+    out = language.copy()
+    geometry = cb3_tract_geometry.copy()
+    geometry["GEOID"] = normalize_geoid(geometry["GEOID"])
+
+    out = add_polygon_centroids(
+        out,
+        geometry,
+        "GEOID",
+        lat_col="tract_centroid_latitude",
+        lon_col="tract_centroid_longitude",
+    )
+
+    geometry = geometry.to_crs("EPSG:4326")
+    geometry["geometry_wkt"] = geometry.geometry.to_wkt()
+
+    out = out.merge(
+        geometry[["GEOID", "geometry_wkt"]],
+        on="GEOID",
+        how="left",
+        validate="one_to_one",
+    )
+
+    missing_geometry = int(out["geometry_wkt"].isna().sum())
+    if missing_geometry:
+        raise ValueError(f"Missing geometry_wkt for {missing_geometry} language rows.")
+
+    return out
+
+
 def main() -> None:
-    tract_universe, _, _, _ = load_cb3_tract_universe(PROJECT_DIR)
+    tract_universe, cb3_tract_geometry, _, _ = load_cb3_tract_universe(PROJECT_DIR)
     cb3_lookup = tract_universe.drop(columns="geometry", errors="ignore").copy()
     cb3_lookup["GEOID"] = normalize_geoid(cb3_lookup["GEOID"])
     cb3_geoids = set(cb3_lookup["GEOID"])
@@ -330,6 +365,8 @@ def main() -> None:
         validate="one_to_one",
     )
     log_lines.extend([f"  {line}" for line in demo_log])
+
+    language = attach_map_geometry(language, cb3_tract_geometry)
 
     language.to_csv(LANGUAGE_OUT, index=False)
 
