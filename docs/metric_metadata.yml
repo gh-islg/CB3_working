@@ -596,57 +596,142 @@ no_routine_checkup_pct:
   display_format: percent
   filename: no_routine_checkup_pct.html
 
-  # --- Economic Security & Food ---
+# --- Economic Security & Food ---
+
+safety_net_enrollment_per_capita:
+  domain: economic-security-food
+  short_label: Safety-net enrollment
+  label: Safety-net enrollment per capita
+  description: >
+    Community District-level Medicaid, SNAP, and cash assistance enrollment context
+    divided by the tract ACS poverty-universe population. This is contextual and
+    should not be interpreted as tract-assigned enrollment.
+  unit: ""
+  source: NYC District Resource Statement and ACS 5-year estimates
+  year: 2024
+  geography: Census tract with Community District context
+  higher_is: context
+  map_classification: bubble
+  display_format: number
+  filename: safety_net_reliance_by_tract.html
 
 poverty_rate_pct:
-  domain: economic-food
+  domain: economic-security-food-context
   short_label: Poverty rate
-  label: Population below poverty level
+  label: Poverty rate
   description: >
-    Percentage of the tract population whose income in the past 12 months
-    was below the poverty level.
+    Share of residents whose income in the past 12 months was below the poverty level.
   unit: "%"
-  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
   source: ACS 5-year estimates, table B17020
   year: 2024
   geography: Census tract
   higher_is: worse
-  map_classification: quintile
+  map_classification: tooltip
   display_format: percent
-  filename: poverty_rate_pct.html
+  filename: context_only.html
 
-food_supply_gap_rank:
-  domain: economic-food
+unemployment_rate_pct:
+  domain: economic-security-food
+  short_label: Unemployment rate
+  label: Unemployment rate
+  description: >
+    Share of the civilian labor force that is unemployed.
+  unit: "%"
+  source: ACS 5-year estimates, table B23025
+  year: 2024
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: labor_market_conditions_by_tract.html
+
+median_earnings_all_workers:
+  domain: economic-security-food-context
+  short_label: Median earnings
+  label: Median earnings for all workers
+  description: >
+    Median earnings in the past 12 months for all workers.
+  unit: "$"
+  source: ACS 5-year estimates, table B20002
+  year: 2024
+  geography: Census tract
+  higher_is: better
+  map_classification: tooltip
+  display_format: currency
+  filename: context_only.html
+
+food_insecurity_rate_pct:
+  domain: economic-security-food
+  short_label: Food insecurity
+  label: Food insecurity rate
+  description: >
+    Estimated food insecurity prevalence from CDC PLACES.
+  unit: "%"
+  source: CDC PLACES
+  year: 2025 release
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: food_insecurity_by_tract.html
+
+food_supply_gap_rank_nta:
+  domain: economic-security-food-context
   short_label: Food supply gap rank
-  label: Emergency food supply gap rank
+  label: Food supply gap rank by NTA
   description: >
-    Emergency food supply gap rank joined to CB3 census tracts.
-    This metric is reported at the NTA level and may repeat across
-    multiple tracts within the same NTA.
-  unit: " rank"
-  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
-  source: Emergency Food Supply Gap dataset
+    NTA-level emergency food supply gap rank joined to CB3 tracts by NTA.
+  unit: ""
+  source: NYC emergency food supply gap data
   year: 2026
   geography: NTA joined to census tract
-  higher_is: worse
-  map_classification: quintile
+  higher_is: context
+  map_classification: tooltip
   display_format: number
-  filename: food_supply_gap_rank.html
+  filename: context_only.html
 
-food_supply_gap_score:
-  domain: economic-food
+food_supply_gap_score_nta:
+  domain: economic-security-food-context
   short_label: Food supply gap score
-  label: Emergency food supply gap weighted score
+  label: Food supply gap score by NTA
   description: >
-    Weighted emergency food supply gap score joined to CB3 census tracts.
-    This metric is reported at the NTA level and may repeat across
-    multiple tracts within the same NTA.
-  unit: " score"
-  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
-  source: Emergency Food Supply Gap dataset, Weighted_Score
+    NTA-level weighted emergency food supply gap score joined to CB3 tracts by NTA.
+  unit: ""
+  source: NYC emergency food supply gap data
   year: 2026
   geography: NTA joined to census tract
   higher_is: worse
-  map_classification: quintile
+  map_classification: tooltip
   display_format: number
-  filename: food_supply_gap_score.html
+  filename: context_only.html
+
+food_supply_gap_food_insecure_pct_nta:
+  domain: economic-security-food-context
+  short_label: NTA food insecure share
+  label: Food insecure percentage by NTA
+  description: >
+    NTA-level food insecure percentage from emergency food supply gap data joined
+    to CB3 tracts by NTA.
+  unit: "%"
+  source: NYC emergency food supply gap data
+  year: 2026
+  geography: NTA joined to census tract
+  higher_is: worse
+  map_classification: tooltip
+  display_format: percent
+  filename: context_only.html
+
+utility_shutoff_risk_pct:
+  domain: economic-security-food
+  short_label: Utility shutoff risk
+  label: Utility shutoff risk
+  description: >
+    Estimated prevalence of utility shutoff risk from CDC PLACES.
+  unit: "%"
+  source: CDC PLACES
+  year: 2025 release
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: utility_shutoff_risk_by_tract.html

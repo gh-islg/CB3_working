@@ -10,9 +10,13 @@ PROJECT_DIR = Path(__file__).resolve().parents[2]
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from src.cb3_utils import load_cb3_tract_universe
+from src.cb3_utils import add_polygon_centroids, load_cb3_tract_universe
 
-RAW_DIR = PROJECT_DIR / "data" / "raw" / "Economics and Food"
+RAW_DIR_CANDIDATES = [
+    PROJECT_DIR / "data" / "raw" / "Economics and Food",
+    PROJECT_DIR / "data" / "raw" / "Economic and Food",
+]
+RAW_DIR = next((path for path in RAW_DIR_CANDIDATES if path.exists()), RAW_DIR_CANDIDATES[0])
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
 CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -517,11 +521,6 @@ def build_safety_net_metric(log_lines, base):
         out["drs_population"] = np.nan
         out["safety_net_enrollment_per_capita"] = out["safety_net_enrollment"]
 
-    out["safety_net_context_note"] = (
-        "DRS safety-net counts are Community District-level context assigned to CB3 tracts; "
-        "denominator uses ACS B17020 poverty universe where available."
-    )
-
     return out
 
 
@@ -557,13 +556,50 @@ def build_provider_points(log_lines):
     _log(log_lines, f"Wrote provider points: {PROVIDER_OUTPUT_PATH} ({len(output)} rows)")
 
 
+
+def attach_map_geometry(output, cb3_tract_geometry):
+    """Attach map-ready centroid and polygon geometry columns to the clean CSV.
+
+    maps.qmd should render from data/clean/economic-food.csv only. This helper
+    makes that possible by storing one centroid pair and one polygon WKT per
+    tract in the clean output.
+    """
+    out = output.copy()
+    geometry = cb3_tract_geometry.copy()
+    geometry["GEOID"] = _normalize_geoid(geometry["GEOID"])
+
+    out = add_polygon_centroids(
+        out,
+        geometry,
+        "GEOID",
+        lat_col="tract_centroid_latitude",
+        lon_col="tract_centroid_longitude",
+    )
+
+    geometry = geometry.to_crs("EPSG:4326")
+    geometry["geometry_wkt"] = geometry.geometry.to_wkt()
+
+    out = out.merge(
+        geometry[["GEOID", "geometry_wkt"]],
+        on="GEOID",
+        how="left",
+        validate="one_to_one",
+    )
+
+    missing_geometry = int(out["geometry_wkt"].isna().sum())
+    if missing_geometry:
+        raise ValueError(f"Missing geometry_wkt for {missing_geometry} tract rows.")
+
+    return out
+
+
 def main():
     log_lines = []
 
     _log(log_lines, f"Project directory: {PROJECT_DIR}")
     _log(log_lines, f"Raw directory: {RAW_DIR}")
 
-    tract_universe, _, _, _ = load_cb3_tract_universe(PROJECT_DIR)
+    tract_universe, cb3_tract_geometry, _, _ = load_cb3_tract_universe(PROJECT_DIR)
     tract_universe = tract_universe.copy()
     tract_universe["GEOID"] = _normalize_geoid(tract_universe["GEOID"])
 
@@ -595,12 +631,7 @@ def main():
     output = build_safety_net_metric(log_lines, output)
     output = add_baseline_demographics(log_lines, output)
     build_provider_points(log_lines)
-
-    output["economic_food_methodology_note"] = (
-        "Clean Economic/Food table for Kailey memo metrics. "
-        "DRS and food supply gap are contextual where source geography is CD/NTA rather than tract."
-    )
-    output["economic_food_qa_note"] = np.where(output["poverty_rate_pct"].isna(), "Missing required poverty metric after join.", "")
+    output = attach_map_geometry(output, cb3_tract_geometry)
 
     assert len(output) == 31, f"Expected 31 CB3 tracts, got {len(output)}"
     assert output["GEOID"].is_unique, "GEOID is not unique."

@@ -14,913 +14,361 @@ jupyter: python3
 
 ## Economic Security and Food Maps
 
-This renders one saved HTML map per available Economic Security & Food metric group.
+This notebook renders four Economic Security and Food topic maps from the
+map-ready clean file:
 
-Each map follows the Health-map rule:
+`data/clean/economic-food.csv`
 
-- demographic context = tract-color radio buttons
-- Economic/Food metric = bubble overlay checkbox
-- emergency food providers = optional point overlay when available
+Each output map has exactly one primary bubble layer. Supporting metrics stay
+in the clean file and appear in the bubble tooltip, so the maps do not lose
+context while avoiding multiple bubble layers.
+
+The notebook does not create or use `map_files/`.
 
 ```{python}
 from pathlib import Path
-import html
-import json
 import sys
 
-import branca.colormap as cm
-import folium
 import geopandas as gpd
-import numpy as np
 import pandas as pd
-from IPython.display import display, HTML
+import yaml
+from shapely import wkt
 
 PROJECT_DIR = Path.cwd()
 while not (PROJECT_DIR / "src").exists() and PROJECT_DIR != PROJECT_DIR.parent:
     PROJECT_DIR = PROJECT_DIR.parent
 
-if not (PROJECT_DIR / "src").exists():
-    raise FileNotFoundError("Could not find project root containing src/ folder.")
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
 
-sys.path.insert(0, str(PROJECT_DIR))
-
-from src.cb3_utils import load_cb3_tract_universe
-from src.map_utils import make_base_map
-
-CLEAN_DIR = PROJECT_DIR / "data" / "clean"
-MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "economic-food"
-MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-ECONOMIC_FOOD_PATH = CLEAN_DIR / "economic-food.csv"
-PROVIDER_PATH = CLEAN_DIR / "emergency_food_providers.csv"
-
-BASELINE_CANDIDATES = [
-    CLEAN_DIR / "tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk_clean.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "health_tract.csv",
-    CLEAN_DIR / "health.csv",
-]
-```
-
-```{python}
-display(
-    HTML(
-        """
-        <style>
-        h1.title, .quarto-title-block { display: none; }
-        .leaflet-container { font-family: Arial, sans-serif; }
-        .leaflet-tooltip { z-index: 2147483647 !important; }
-        .leaflet-control-layers { display: none !important; }
-        </style>
-        """
-    )
+from src.map_utils import (
+    build_metric_bubble_map,
+    find_project_dir,
+    format_metric_value,
 )
+
+PROJECT_DIR = find_project_dir()
+CLEAN_PATH = PROJECT_DIR / "data" / "clean" / "economic-food.csv"
+METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
+OUTPUT_DIR = PROJECT_DIR / "maps" / "economic-food"
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+PRIMARY_DOMAIN = "economic-security-food"
+CONTEXT_DOMAIN = "economic-security-food-context"
+EXCLUDED_DEMOGRAPHIC_METRICS = {"senior_poverty_rate"}
 ```
 
 ```{python}
-MAP_GROUPS = {
-    "safety_net": {
-        "title": "CB3 Economic Security: Safety-net reliance",
-        "subtitle": "Bubbles show DRS Medicaid + SNAP + Cash Assistance context; tract colors show selectable demographic context.",
-        "filename": "safety_net_reliance_by_tract.html",
-        "bubble_metrics": ["safety_net_enrollment_per_capita", "poverty_rate_pct"],
-        "provider_points": False,
+def to_map_spec(meta, include_filename=False):
+    """Convert metric_metadata.yml entries into the spec expected by map_utils."""
+    spec = {
+        "dimension": meta["short_label"],
+        "label": meta["label"],
+        "unit": meta["unit"],
+    }
+
+    if "palette" in meta:
+        spec["palette"] = meta["palette"]
+
+    if include_filename:
+        spec["filename"] = meta["filename"]
+
+    for optional_key in ("positive_values_only", "zero_color", "zero_label"):
+        if optional_key in meta:
+            spec[optional_key] = meta[optional_key]
+
+    return spec
+
+
+with open(METADATA_PATH, encoding="utf-8") as f:
+    all_metrics = yaml.safe_load(f) or {}
+
+primary_specs = {
+    variable: to_map_spec(meta, include_filename=True)
+    for variable, meta in all_metrics.items()
+    if meta.get("domain") == PRIMARY_DOMAIN
+}
+
+context_specs = {
+    variable: to_map_spec(meta, include_filename=True)
+    for variable, meta in all_metrics.items()
+    if meta.get("domain") == CONTEXT_DOMAIN
+}
+
+demographic_specs = {
+    variable: to_map_spec(meta)
+    for variable, meta in all_metrics.items()
+    if meta.get("domain") == "demographics"
+    and variable not in EXCLUDED_DEMOGRAPHIC_METRICS
+}
+
+if not primary_specs:
+    raise ValueError(f"No primary map metrics found with domain: {PRIMARY_DOMAIN}")
+
+if not demographic_specs:
+    raise ValueError("No demographic metrics found in metric_metadata.yml.")
+
+print("Primary Economic/Food map metrics:")
+for variable, spec in primary_specs.items():
+    print(f"  {variable} -> {spec['filename']}")
+
+print("\nContext metrics available for tooltips:")
+for variable in context_specs:
+    print(f"  {variable}")
+
+print("\nDemographic backdrop metrics:")
+for variable in demographic_specs:
+    print(f"  {variable}")
+```
+
+## Four map topics
+
+```{python}
+MAP_TOPICS = {
+    "safety_net_reliance": {
+        "primary_metric": "safety_net_enrollment_per_capita",
+        "title": "CB3 Economic Security & Food: Safety-net reliance",
+        "subtitle": (
+            "Bubbles show safety-net enrollment per capita. "
+            "Tooltip also shows poverty and safety-net program counts where available. "
+            "Use the layer control to pick a demographic background."
+        ),
+        "context_metrics": [
+            "poverty_rate_pct",
+            "poverty_count",
+            "poverty_universe_population",
+            "medicaid_enrollment",
+            "snap_enrollment",
+            "cash_assistance_enrollment",
+            "safety_net_enrollment",
+        ],
     },
-    "labor_market": {
-        "title": "CB3 Economic Security: Labor market conditions",
-        "subtitle": "Bubbles show unemployment, household income, and B20002 median earnings when available; tract colors show selectable demographic context.",
-        "filename": "labor_market_conditions_by_tract.html",
-        "bubble_metrics": ["unemployment_rate_pct", "median_household_income", "median_earnings_all_workers"],
-        "provider_points": False,
+    "labor_market_conditions": {
+        "primary_metric": "unemployment_rate_pct",
+        "title": "CB3 Economic Security & Food: Labor-market conditions",
+        "subtitle": (
+            "Bubbles show unemployment rate. "
+            "Tooltip also shows labor-force size, unemployed population, median earnings, "
+            "and household income where available. Use the layer control to pick a demographic background."
+        ),
+        "context_metrics": [
+            "civilian_labor_force",
+            "unemployed_population",
+            "median_earnings_all_workers",
+            "median_household_income",
+        ],
     },
     "food_insecurity": {
+        "primary_metric": "food_insecurity_rate_pct",
         "title": "CB3 Economic Security & Food: Food insecurity",
-        "subtitle": "Bubbles show PLACES tract food insecurity or food supply gap context; provider points are included when available.",
-        "filename": "food_insecurity_and_provider_locations.html",
-        "bubble_metrics": ["food_insecurity_rate_pct", "food_supply_gap_score_nta", "food_supply_gap_food_insecure_pct_nta"],
-        "provider_points": True,
-    },
-    "utility_shutoff": {
-        "title": "CB3 Economic Security: Utility shutoff risk",
-        "subtitle": "Bubbles show PLACES SHUTUTILITY tract estimates; tract colors show selectable demographic context.",
-        "filename": "utility_shutoff_risk_by_tract.html",
-        "bubble_metrics": ["utility_shutoff_risk_pct"],
-        "provider_points": False,
-    },
-}
-
-BUBBLE_METRICS = {
-    "safety_net_enrollment_per_capita": {
-        "label": "Safety-net reliance",
-        "unit": "rate",
-        "count_col": "safety_net_enrollment",
-        "denominator_col": "drs_population",
-        "count_label": "Combined safety-net enrollment",
-        "denominator_label": "ACS poverty universe denominator",
-        "geography_note": "DRS counts are CD-level context assigned to CB3 tracts.",
-    },
-    "poverty_rate_pct": {
-        "label": "Poverty rate",
-        "unit": "%",
-        "count_col": "poverty_count",
-        "denominator_col": "poverty_universe_population",
-        "count_label": "Population below poverty",
-        "denominator_label": "Poverty universe population",
-        "geography_note": "ACS B17020 tract-level estimate.",
-    },
-    "unemployment_rate_pct": {
-        "label": "Unemployment rate",
-        "unit": "%",
-        "count_col": "unemployed_population",
-        "denominator_col": "civilian_labor_force",
-        "count_label": "Unemployed population",
-        "denominator_label": "Civilian labor force",
-        "geography_note": "ACS B23025 tract-level estimate.",
-    },
-    "median_household_income": {
-        "label": "Median household income",
-        "unit": "$",
-        "geography_note": "ACS B19013 tract-level estimate.",
-    },
-    "median_earnings_all_workers": {
-        "label": "Median earnings, all workers",
-        "unit": "$",
-        "geography_note": "ACS B20002 tract-level estimate.",
-    },
-    "food_insecurity_rate_pct": {
-        "label": "Food insecurity",
-        "unit": "%",
-        "geography_note": "PLACES FOODINSECU_CrudePrev tract estimate.",
-        "extra_tooltip_cols": [
-            ("food_supply_gap_rank_nta", "Food supply gap rank, NTA", "rank"),
-            ("food_supply_gap_score_nta", "Food supply gap score, NTA", "score"),
-            ("food_supply_gap_food_insecure_pct_nta", "Food insecure percentage, NTA", "%"),
+        "subtitle": (
+            "Bubbles show tract-level food insecurity rate. "
+            "Tooltip also shows NTA-level food supply gap rank, score, food-insecure share, "
+            "and supply gap pounds where available. Use the layer control to pick a demographic background."
+        ),
+        "context_metrics": [
+            "food_supply_gap_rank_nta",
+            "food_supply_gap_score_nta",
+            "food_supply_gap_food_insecure_pct_nta",
+            "food_supply_gap_lbs_nta",
         ],
     },
-    "food_supply_gap_score_nta": {
-        "label": "Food supply gap score",
-        "unit": "score",
-        "geography_note": "Emergency Food Supply Gap NTA-level context.",
-        "extra_tooltip_cols": [
-            ("food_supply_gap_rank_nta", "Food supply gap rank, NTA", "rank"),
-            ("food_supply_gap_food_insecure_pct_nta", "Food insecure percentage, NTA", "%"),
-        ],
-    },
-    "food_supply_gap_food_insecure_pct_nta": {
-        "label": "Food insecure percentage, NTA",
-        "unit": "%",
-        "geography_note": "Emergency Food Supply Gap NTA-level context.",
-        "extra_tooltip_cols": [
-            ("food_supply_gap_rank_nta", "Food supply gap rank, NTA", "rank"),
-            ("food_supply_gap_score_nta", "Food supply gap score, NTA", "score"),
-        ],
-    },
-    "utility_shutoff_risk_pct": {
-        "label": "Utility shutoff risk",
-        "unit": "%",
-        "geography_note": "PLACES SHUTUTILITY_CrudePrev tract estimate.",
+    "utility_shutoff_risk": {
+        "primary_metric": "utility_shutoff_risk_pct",
+        "title": "CB3 Economic Security & Food: Utility shutoff risk",
+        "subtitle": (
+            "Bubbles show estimated utility shutoff risk. "
+            "Use the layer control to pick a demographic background."
+        ),
+        "context_metrics": [],
     },
 }
-
-# Same demographic background options used by the Health map.
-DEMOGRAPHIC_LAYERS = {
-    "median_household_income": {"label": "Median household income", "unit": "$"},
-    "age_0_to_19_share": {"label": "Age 0-19", "unit": "%"},
-    "age_20_to_64_share": {"label": "Age 20-64", "unit": "%"},
-    "age_65_plus_share": {"label": "Age 65+", "unit": "%"},
-    "white_non_hispanic_share": {"label": "White non-Hispanic share", "unit": "%"},
-    "black_non_hispanic_share": {"label": "Black non-Hispanic share", "unit": "%"},
-    "asian_non_hispanic_share": {"label": "Asian non-Hispanic share", "unit": "%"},
-    "hispanic_share": {"label": "Hispanic share", "unit": "%"},
-    "poverty_rate": {"label": "Poverty rate", "unit": "%"},
-    "poverty_rate_pct": {"label": "Poverty rate", "unit": "%"},
-    "lep_household_share": {"label": "Limited-English-proficient households", "unit": "%"},
-}
-
-DEMOGRAPHIC_LAYER_ORDER = [
-    "median_household_income",
-    "age_0_to_19_share",
-    "age_20_to_64_share",
-    "age_65_plus_share",
-    "white_non_hispanic_share",
-    "black_non_hispanic_share",
-    "asian_non_hispanic_share",
-    "hispanic_share",
-    "poverty_rate",
-    "poverty_rate_pct",
-    "lep_household_share",
-]
 ```
 
+## Load prepared clean map file
+
 ```{python}
-def normalize_geoid(series):
-    return (
-        series.astype(str)
-        .str.replace(r"\.0$", "", regex=True)
-        .str.extract(r"(\d+)")[0]
-        .str.zfill(11)
+if not CLEAN_PATH.exists():
+    raise FileNotFoundError(
+        f"Could not find {CLEAN_PATH}. Run scripts/economic-food/build.py first."
     )
 
+clean = pd.read_csv(CLEAN_PATH, dtype={"GEOID": "string"}, low_memory=False)
 
-def add_geoid(df):
-    df = df.copy()
+required_columns = {
+    "GEOID",
+    "tract_label",
+    "nta_name",
+    "tract_centroid_latitude",
+    "tract_centroid_longitude",
+    "geometry_wkt",
+}
+missing_required = sorted(required_columns - set(clean.columns))
+if missing_required:
+    raise ValueError(
+        "economic-food.csv is not map-ready. Missing columns: "
+        + ", ".join(missing_required)
+        + ". Re-run the refactored scripts/economic-food/build.py."
+    )
 
-    if "GEOID" in df.columns:
-        df["GEOID"] = normalize_geoid(df["GEOID"])
-        return df
+clean["GEOID"] = clean["GEOID"].astype(str).str.extract(r"(\d+)")[0].str.zfill(11)
+clean["geometry"] = clean["geometry_wkt"].map(wkt.loads)
 
-    if "geoid" in df.columns:
-        df = df.rename(columns={"geoid": "GEOID"})
-        df["GEOID"] = normalize_geoid(df["GEOID"])
-        return df
-
-    if "GEOID20" in df.columns:
-        df = df.rename(columns={"GEOID20": "GEOID"})
-        df["GEOID"] = normalize_geoid(df["GEOID"])
-        return df
-
-    if {"state", "county", "tract"}.issubset(df.columns):
-        df["GEOID"] = (
-            df["state"].astype(str).str.zfill(2)
-            + df["county"].astype(str).str.zfill(3)
-            + df["tract"].astype(str).str.zfill(6)
-        )
-        return df
-
-    raise KeyError(f"Could not create GEOID from columns: {list(df.columns)}")
-
-
-def load_demographic_baseline():
-    for path in BASELINE_CANDIDATES:
-        if not path.exists():
-            continue
-
-        try:
-            df = pd.read_csv(path, dtype={"GEOID": "string", "geoid": "string", "GEOID20": "string"}, low_memory=False)
-            df = add_geoid(df)
-        except Exception as exc:
-            print(f"Skipping demographic baseline candidate {path}: {exc}")
-            continue
-
-        found = [col for col in DEMOGRAPHIC_LAYER_ORDER if col in df.columns]
-        if found:
-            print(f"Using demographic baseline: {path}")
-            print(f"Demographic columns found: {found}")
-            out = df[["GEOID"] + found].copy()
-            for col in found:
-                out[col] = pd.to_numeric(out[col], errors="coerce")
-            return out
-
-    print("No separate demographic baseline file found. Will use demographic columns already present in economic-food.csv where available.")
-    return pd.DataFrame(columns=["GEOID"])
-```
-
-```{python}
-if not ECONOMIC_FOOD_PATH.exists():
-    raise FileNotFoundError(f"Could not find clean file: {ECONOMIC_FOOD_PATH}")
-
-economic_food = pd.read_csv(ECONOMIC_FOOD_PATH, dtype={"GEOID": "string"}, low_memory=False)
-economic_food = add_geoid(economic_food)
-
-tract_universe, cb3_geometry, _, _ = load_cb3_tract_universe(PROJECT_DIR)
-tract_universe["GEOID"] = normalize_geoid(tract_universe["GEOID"])
-cb3_geometry["GEOID"] = normalize_geoid(cb3_geometry["GEOID"])
-
-tracts = cb3_geometry.merge(
-    tract_universe.drop(columns="geometry", errors="ignore"),
-    on="GEOID",
-    how="left",
-    validate="one_to_one",
+tracts = gpd.GeoDataFrame(
+    clean.drop(columns=["geometry_wkt"]),
+    geometry="geometry",
+    crs="EPSG:4326",
 )
 
-economic_cols = [col for col in economic_food.columns if col == "GEOID" or col not in tracts.columns]
-tracts = tracts.merge(economic_food[economic_cols], on="GEOID", how="left", validate="one_to_one")
+all_spec_columns = set(primary_specs) | set(context_specs) | set(demographic_specs)
+for column in all_spec_columns:
+    if column in tracts.columns:
+        tracts[column] = pd.to_numeric(tracts[column], errors="coerce")
 
-demographic_baseline = load_demographic_baseline()
-if not demographic_baseline.empty:
-    # Overwrite/fill demographic columns with restored baseline columns.
-    for col in [c for c in demographic_baseline.columns if c != "GEOID"]:
-        if col in tracts.columns:
-            tracts = tracts.drop(columns=[col])
-    tracts = tracts.merge(demographic_baseline, on="GEOID", how="left", validate="one_to_one")
+available_primary_specs = {
+    metric: spec
+    for metric, spec in primary_specs.items()
+    if metric in tracts.columns and tracts[metric].notna().any()
+}
 
-tracts = tracts.to_crs("EPSG:4326")
+available_context_specs = {
+    metric: spec
+    for metric, spec in context_specs.items()
+    if metric in tracts.columns and tracts[metric].notna().any()
+}
 
-if "tract_label" not in tracts.columns:
-    tracts["tract_label"] = tracts["GEOID"].str[-6:].str.lstrip("0")
-
-if "nta_name" not in tracts.columns:
-    if "nta_name_x" in tracts.columns:
-        tracts["nta_name"] = tracts["nta_name_x"]
-    elif "NTAName" in tracts.columns:
-        tracts["nta_name"] = tracts["NTAName"]
-    else:
-        tracts["nta_name"] = ""
-
-numeric_candidates = set(DEMOGRAPHIC_LAYER_ORDER)
-for metric, meta in BUBBLE_METRICS.items():
-    numeric_candidates.add(metric)
-    for col in [meta.get("count_col"), meta.get("denominator_col")]:
-        if col:
-            numeric_candidates.add(col)
-    for col, _, _ in meta.get("extra_tooltip_cols", []):
-        numeric_candidates.add(col)
-
-for col in numeric_candidates:
-    if col in tracts.columns:
-        tracts[col] = pd.to_numeric(tracts[col], errors="coerce")
-
-AVAILABLE_DEMOGRAPHIC_LAYERS = []
-seen_labels = set()
-for metric in DEMOGRAPHIC_LAYER_ORDER:
-    if metric in tracts.columns and tracts[metric].notna().any():
-        label = DEMOGRAPHIC_LAYERS[metric]["label"]
-        if label not in seen_labels:
-            AVAILABLE_DEMOGRAPHIC_LAYERS.append(metric)
-            seen_labels.add(label)
-
-AVAILABLE_MAP_GROUPS = {}
-for group_key, group_spec in MAP_GROUPS.items():
-    available_bubbles = [
-        metric for metric in group_spec["bubble_metrics"]
-        if metric in tracts.columns and tracts[metric].notna().any()
-    ]
-    if available_bubbles:
-        AVAILABLE_MAP_GROUPS[group_key] = {**group_spec, "available_bubbles": available_bubbles}
+available_demographic_specs = {
+    metric: spec
+    for metric, spec in demographic_specs.items()
+    if metric in tracts.columns and tracts[metric].notna().any()
+}
 
 assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
-assert tracts["GEOID"].is_unique, "GEOID is not unique."
+assert tracts["GEOID"].is_unique
 
-print("Available maps:")
-for group_key, spec in AVAILABLE_MAP_GROUPS.items():
-    print(f"  {spec['filename']}: {spec['available_bubbles']}")
-
-print("Available demographic backgrounds:")
-if AVAILABLE_DEMOGRAPHIC_LAYERS:
-    for metric in AVAILABLE_DEMOGRAPHIC_LAYERS:
-        print(f"  {DEMOGRAPHIC_LAYERS[metric]['label']} ({metric}): {tracts[metric].notna().sum()} tracts")
-else:
-    print("  none")
-```
-
-```{python}
-if PROVIDER_PATH.exists():
-    providers = pd.read_csv(PROVIDER_PATH, low_memory=False)
-    providers["latitude"] = pd.to_numeric(providers["latitude"], errors="coerce")
-    providers["longitude"] = pd.to_numeric(providers["longitude"], errors="coerce")
-    providers = providers.dropna(subset=["latitude", "longitude"]).copy()
-else:
-    providers = pd.DataFrame(columns=["provider_name", "address", "provider_type", "latitude", "longitude"])
-
-print(f"Emergency food provider points: {len(providers)}")
-```
-
-```{python}
-BACKGROUND_PALETTE = ["#f7fcf5", "#e5f5e0", "#c7e9c0", "#a1d99b", "#74c476", "#31a354", "#006d2c"]
-BUBBLE_COLORS = {
-    "safety_net_enrollment_per_capita": "#222222",
-    "poverty_rate_pct": "#555555",
-    "unemployment_rate_pct": "#222222",
-    "median_household_income": "#555555",
-    "median_earnings_all_workers": "#777777",
-    "food_insecurity_rate_pct": "#222222",
-    "food_supply_gap_score_nta": "#555555",
-    "food_supply_gap_food_insecure_pct_nta": "#777777",
-    "utility_shutoff_risk_pct": "#222222",
-}
-PROVIDER_COLOR = "#7a0177"
-
-
-def format_value(value, unit):
-    if pd.isna(value):
-        return "Not available"
-    if unit == "%":
-        return f"{value:.1f}%"
-    if unit == "$":
-        return f"${value:,.0f}"
-    if unit == "rank":
-        return f"{value:,.0f}"
-    if unit == "score":
-        return f"{value:.2f}"
-    if unit == "rate":
-        return f"{value:.2f}"
-    if unit == "count":
-        return f"{value:,.0f}"
-    return f"{value:,.1f}"
-
-
-def make_breaks(values, bins=5):
-    valid = pd.Series(values).dropna()
-    valid = valid[valid >= 0]
-    if valid.empty:
-        return [0, 1]
-    if valid.nunique() <= bins:
-        breaks = sorted(valid.unique())
-    else:
-        breaks = list(valid.quantile(np.linspace(0, 1, bins + 1)).values)
-    breaks = sorted(set(float(x) for x in breaks if pd.notna(x)))
-    if len(breaks) == 1:
-        breaks = [0.0, breaks[0]] if breaks[0] > 0 else [0.0, 1.0]
-    cleaned = [breaks[0]]
-    for value in breaks[1:]:
-        if value <= cleaned[-1]:
-            value = cleaned[-1] + 1e-9
-        cleaned.append(value)
-    return cleaned
-
-
-def add_title(map_object, title, subtitle):
-    title_html = f"""
-    <div class="cb3-map-title">
-      <div class="cb3-map-title-main">{html.escape(title)}</div>
-      <div class="cb3-map-title-sub">{html.escape(subtitle)}</div>
-    </div>
-    """
-    css = """
-    <style>
-      .cb3-map-title {
-        position: fixed !important;
-        top: 12px !important;
-        left: 120px !important;
-        z-index: 2147483646 !important;
-        background: rgba(255,255,255,0.92) !important;
-        border: 1px solid rgba(0,0,0,0.20) !important;
-        border-radius: 4px !important;
-        padding: 10px 14px !important;
-        max-width: 760px !important;
-        font-family: Arial, sans-serif !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.18) !important;
-      }
-      .cb3-map-title-main {
-        font-size: 24px !important;
-        line-height: 1.15 !important;
-        font-weight: 700 !important;
-        color: #222 !important;
-      }
-      .cb3-map-title-sub {
-        margin-top: 6px !important;
-        font-size: 17px !important;
-        line-height: 1.25 !important;
-        color: #222 !important;
-      }
-    </style>
-    """
-    map_object.get_root().html.add_child(folium.Element(css + title_html))
-```
-
-```{python}
-def add_demographic_layer(map_object, geodata, metric):
-    label = DEMOGRAPHIC_LAYERS[metric]["label"]
-    unit = DEMOGRAPHIC_LAYERS[metric]["unit"]
-    plot_data = geodata.copy()
-    plot_data[f"{metric}_display"] = plot_data[metric].apply(lambda x: format_value(x, unit))
-
-    breaks = make_breaks(plot_data[metric], bins=5)
-    colors = BACKGROUND_PALETTE[: max(2, len(breaks) - 1)]
-    color_map = cm.StepColormap(colors=colors, index=breaks, vmin=breaks[0], vmax=breaks[-1])
-
-    def style_function(feature):
-        value = feature["properties"].get(metric)
-        fill_color = "#f7f7f7" if value is None or pd.isna(value) else color_map(value)
-        return {"fillColor": fill_color, "color": "#555555", "weight": 1.1, "fillOpacity": 0.72}
-
-    tooltip = folium.GeoJsonTooltip(
-        fields=["tract_label", "nta_name", f"{metric}_display"],
-        aliases=["Census tract", "NTA", label],
-        sticky=True,
-        labels=True,
-        style="""
-            background-color: rgba(255, 255, 255, 0.92);
-            border: 1px solid #cccccc;
-            border-radius: 4px;
-            box-shadow: 2px 2px 4px rgba(0,0,0,0.2);
-            font-size: 15px;
-            padding: 8px;
-        """,
+missing_primary = [
+    topic["primary_metric"]
+    for topic in MAP_TOPICS.values()
+    if topic["primary_metric"] not in available_primary_specs
+]
+if missing_primary:
+    raise ValueError(
+        "These four-map primary metrics are missing or all null in economic-food.csv/YAML: "
+        + ", ".join(missing_primary)
     )
 
-    group = folium.FeatureGroup(name=label, show=False, control=False)
-    folium.GeoJson(plot_data, style_function=style_function, tooltip=tooltip).add_to(group)
-    group.add_to(map_object)
-    return {"label": label, "js_name": group.get_name(), "metric": metric}
-
-
-def add_no_background_layer(map_object, geodata):
-    group = folium.FeatureGroup(name="No demographic background", show=False, control=False)
-    folium.GeoJson(
-        geodata,
-        interactive=False,
-        style_function=lambda feature: {"fillColor": "#ffffff", "color": "#555555", "weight": 1.1, "fillOpacity": 0.0},
-    ).add_to(group)
-    group.add_to(map_object)
-    return {"label": "No demographic background", "js_name": group.get_name(), "metric": "__none__"}
-
-
-def add_outline_layer(map_object, geodata):
-    group = folium.FeatureGroup(name="CB3 census tract outlines", show=True, control=False)
-    folium.GeoJson(
-        geodata,
-        interactive=False,
-        style_function=lambda feature: {"fillColor": "transparent", "color": "#222222", "weight": 1.6, "fillOpacity": 0},
-    ).add_to(group)
-    group.add_to(map_object)
-    return {"label": "CB3 census tract outlines", "js_name": group.get_name()}
-
-
-def add_metric_bubbles(map_object, geodata, metric, show=True):
-    meta = BUBBLE_METRICS[metric]
-    label = meta["label"]
-    unit = meta["unit"]
-    count_col = meta.get("count_col")
-    denominator_col = meta.get("denominator_col")
-
-    plot_data = geodata.copy()
-    plot_data[f"{metric}_display"] = plot_data[metric].apply(lambda x: format_value(x, unit))
-
-    if count_col and count_col in plot_data.columns:
-        size_series = plot_data[count_col].fillna(0)
-    else:
-        size_series = plot_data[metric].fillna(0)
-
-    max_size = max(float(size_series.max(skipna=True)), 1.0)
-
-    projected = plot_data.to_crs("EPSG:2263")
-    points = projected.copy()
-    points["geometry"] = points.geometry.representative_point()
-    points = points.to_crs("EPSG:4326")
-
-    color = BUBBLE_COLORS.get(metric, "#222222")
-    group = folium.FeatureGroup(name=f"{label} bubbles", show=show, control=False)
-
-    for _, row in points.iterrows():
-        value = row.get(metric)
-        if pd.isna(value):
-            continue
-
-        if count_col and count_col in points.columns and pd.notna(row.get(count_col)):
-            size_value = row.get(count_col)
-        else:
-            size_value = value
-
-        radius = 5 + 22 * np.sqrt(max(float(size_value), 0) / max_size)
-
-        tooltip_rows = [
-            ("Census tract", row.get("tract_label", row.get("GEOID", ""))),
-            ("NTA", row.get("nta_name", "")),
-            (label, row.get(f"{metric}_display", format_value(value, unit))),
-        ]
-
-        if count_col and count_col in row and pd.notna(row.get(count_col)):
-            tooltip_rows.append((meta.get("count_label", "Count"), format_value(row.get(count_col), "count")))
-
-        if denominator_col and denominator_col in row and pd.notna(row.get(denominator_col)):
-            tooltip_rows.append((meta.get("denominator_label", "Denominator"), format_value(row.get(denominator_col), "count")))
-
-        for extra_col, extra_label, extra_unit in meta.get("extra_tooltip_cols", []):
-            if extra_col in row and pd.notna(row.get(extra_col)):
-                tooltip_rows.append((extra_label, format_value(row.get(extra_col), extra_unit)))
-
-        if meta.get("geography_note"):
-            tooltip_rows.append(("Geography", meta["geography_note"]))
-
-        tooltip_html = "<table>" + "".join(
-            f"<tr><td style='font-weight:700; padding:3px 12px 3px 0;'>{html.escape(str(k))}</td>"
-            f"<td style='padding:3px 0;'>{html.escape(str(v))}</td></tr>"
-            for k, v in tooltip_rows
-        ) + "</table>"
-
-        folium.CircleMarker(
-            location=[row.geometry.y, row.geometry.x],
-            radius=radius,
-            color=color,
-            weight=1.5,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.42,
-            opacity=0.70,
-            tooltip=folium.Tooltip(tooltip_html, sticky=True),
-            popup=folium.Popup(tooltip_html, max_width=420),
-        ).add_to(group)
-
-    group.add_to(map_object)
-    return {"label": f"{label} bubbles", "js_name": group.get_name(), "metric": metric, "show": show}
-
-
-def add_provider_points(map_object, provider_frame, show=False):
-    group = folium.FeatureGroup(name=f"Emergency food providers (n={len(provider_frame)})", show=show, control=False)
-    for _, row in provider_frame.iterrows():
-        name = row.get("provider_name", "Emergency food provider")
-        lines = [f"<b>{html.escape(str(name))}</b>"]
-        if pd.notna(row.get("provider_type")):
-            lines.append(f"Type: {html.escape(str(row.get('provider_type')))}")
-        if pd.notna(row.get("address")):
-            lines.append(f"Address: {html.escape(str(row.get('address')))}")
-        folium.CircleMarker(
-            location=[row["latitude"], row["longitude"]],
-            radius=5,
-            color=PROVIDER_COLOR,
-            fill=True,
-            fill_color=PROVIDER_COLOR,
-            fill_opacity=0.85,
-            tooltip=folium.Tooltip("<br>".join(lines), sticky=True),
-        ).add_to(group)
-    group.add_to(map_object)
-    return {"label": f"Emergency food providers (n={len(provider_frame)})", "js_name": group.get_name(), "show": show}
-```
-
-```{python}
-def add_custom_side_panel(map_object, demographic_layers, bubble_layers, outline_layer, provider_layer=None):
-    map_name = map_object.get_name()
-
-    default_idx = 0
-    for i, layer in enumerate(demographic_layers):
-        if layer["metric"] == "median_household_income":
-            default_idx = i
-
-    demo_controls = []
-    for i, layer in enumerate(demographic_layers):
-        checked = "checked" if i == default_idx else ""
-        demo_controls.append(
-            f"""
-            <label class="cb3-panel-option">
-              <input type="radio" name="cb3-demographic-background-{map_name}" value="{i}" {checked}>
-              {html.escape(layer["label"])}
-            </label>
-            """
-        )
-
-    bubble_controls = []
-    for i, layer in enumerate(bubble_layers):
-        checked = "checked" if layer.get("show") else ""
-        bubble_controls.append(
-            f"""
-            <label class="cb3-panel-option">
-              <input type="checkbox" class="cb3-bubble-toggle-{map_name}" value="{i}" {checked}>
-              {html.escape(layer["label"])}
-            </label>
-            """
-        )
-
-    provider_control = ""
-    if provider_layer is not None:
-        checked = "checked" if provider_layer.get("show") else ""
-        provider_control = f"""
-        <label class="cb3-panel-option">
-          <input type="checkbox" id="cb3-provider-toggle-{map_name}" {checked}>
-          {html.escape(provider_layer["label"])}
-        </label>
-        """
-
-    panel_html = f"""
-    <div id="cb3-health-style-panel-{map_name}" class="cb3-health-style-panel">
-      <div class="cb3-panel-section">
-        {''.join(demo_controls)}
-      </div>
-      <div class="cb3-panel-divider"></div>
-      <div class="cb3-panel-section">
-        <label class="cb3-panel-option">
-          <input type="checkbox" id="cb3-outline-toggle-{map_name}" checked>
-          {html.escape(outline_layer["label"])}
-        </label>
-        {provider_control}
-        {''.join(bubble_controls)}
-      </div>
-    </div>
-    """
-
-    css = f"""
-    <style>
-      #cb3-health-style-panel-{map_name} {{
-        position: fixed !important;
-        top: 12px !important;
-        right: 12px !important;
-        z-index: 2147483647 !important;
-        background: rgba(255,255,255,0.96) !important;
-        border: 2px solid rgba(0,0,0,0.25) !important;
-        border-radius: 4px !important;
-        padding: 8px 10px !important;
-        min-width: 345px !important;
-        max-width: 430px !important;
-        max-height: 88vh !important;
-        overflow-y: auto !important;
-        font-family: Arial, sans-serif !important;
-        font-size: 17px !important;
-        line-height: 1.28 !important;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.25) !important;
-      }}
-      #cb3-health-style-panel-{map_name} .cb3-panel-option {{
-        display: block !important;
-        margin: 6px 0 !important;
-        color: #222 !important;
-        white-space: normal !important;
-      }}
-      #cb3-health-style-panel-{map_name} input {{
-        margin-right: 6px !important;
-        transform: scale(1.18);
-        vertical-align: middle !important;
-      }}
-      #cb3-health-style-panel-{map_name} .cb3-panel-divider {{
-        border-top: 1px solid #d0d0d0 !important;
-        margin: 9px 0 !important;
-      }}
-    </style>
-    """
-
-    demo_js = ",\n".join([f'{{label: {json.dumps(layer["label"])}, layer: {layer["js_name"]}}}' for layer in demographic_layers])
-    bubble_js = ",\n".join([f'{{label: {json.dumps(layer["label"])}, layer: {layer["js_name"]}}}' for layer in bubble_layers])
-    provider_js = provider_layer["js_name"] if provider_layer is not None else "null"
-
-    js = f"""
-    <script>
-    (function() {{
-      function setupPanel() {{
-        var map = {map_name};
-        var demoLayers = [{demo_js}];
-        var bubbleLayers = [{bubble_js}];
-        var outlineLayer = {outline_layer["js_name"]};
-        var providerLayer = {provider_js};
-
-        function setDemographicLayer(index) {{
-          demoLayers.forEach(function(item) {{
-            if (map.hasLayer(item.layer)) {{
-              map.removeLayer(item.layer);
-            }}
-          }});
-          if (demoLayers[index]) {{
-            demoLayers[index].layer.addTo(map);
-          }}
-        }}
-
-        function setBubbleLayer(index, visible) {{
-          if (!bubbleLayers[index]) return;
-          var layer = bubbleLayers[index].layer;
-          if (visible) {{
-            if (!map.hasLayer(layer)) layer.addTo(map);
-          }} else {{
-            if (map.hasLayer(layer)) map.removeLayer(layer);
-          }}
-        }}
-
-        document.querySelectorAll('input[name="cb3-demographic-background-{map_name}"]').forEach(function(input) {{
-          input.addEventListener('change', function(event) {{
-            setDemographicLayer(parseInt(event.target.value));
-          }});
-        }});
-
-        document.querySelectorAll('.cb3-bubble-toggle-{map_name}').forEach(function(input) {{
-          input.addEventListener('change', function(event) {{
-            setBubbleLayer(parseInt(event.target.value), event.target.checked);
-          }});
-        }});
-
-        var outlineToggle = document.getElementById('cb3-outline-toggle-{map_name}');
-        if (outlineToggle) {{
-          outlineToggle.addEventListener('change', function(event) {{
-            if (event.target.checked) {{
-              if (!map.hasLayer(outlineLayer)) outlineLayer.addTo(map);
-            }} else {{
-              if (map.hasLayer(outlineLayer)) map.removeLayer(outlineLayer);
-            }}
-          }});
-        }}
-
-        var providerToggle = document.getElementById('cb3-provider-toggle-{map_name}');
-        if (providerToggle && providerLayer) {{
-          providerToggle.addEventListener('change', function(event) {{
-            if (event.target.checked) {{
-              if (!map.hasLayer(providerLayer)) providerLayer.addTo(map);
-            }} else {{
-              if (map.hasLayer(providerLayer)) map.removeLayer(providerLayer);
-            }}
-          }});
-        }}
-
-        var checkedDemo = document.querySelector('input[name="cb3-demographic-background-{map_name}"]:checked');
-        if (checkedDemo) {{
-          setDemographicLayer(parseInt(checkedDemo.value));
-        }}
-      }}
-
-      if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', setupPanel);
-      }} else {{
-        setupPanel();
-      }}
-    }})();
-    </script>
-    """
-
-    map_object.get_root().html.add_child(folium.Element(css + panel_html + js))
-```
-
-```{python}
-def build_group_map(group_key, group_spec):
-    m = make_base_map(tracts)
-
-    demographic_layer_objects = []
-    for demo_metric in AVAILABLE_DEMOGRAPHIC_LAYERS:
-        demographic_layer_objects.append(add_demographic_layer(m, tracts, demo_metric))
-
-    demographic_layer_objects.append(add_no_background_layer(m, tracts))
-
-    outline_layer = add_outline_layer(m, tracts)
-
-    bubble_layer_objects = []
-    for i, metric in enumerate(group_spec["available_bubbles"]):
-        bubble_layer_objects.append(add_metric_bubbles(m, tracts, metric, show=(i == 0)))
-
-    provider_layer = None
-    if group_spec.get("provider_points") and not providers.empty:
-        provider_layer = add_provider_points(m, providers, show=False)
-
-    add_title(m, group_spec["title"], group_spec["subtitle"])
-    add_custom_side_panel(m, demographic_layer_objects, bubble_layer_objects, outline_layer, provider_layer=provider_layer)
-
-    return m
-
-
-rendered_maps = {}
-
-for group_key, group_spec in AVAILABLE_MAP_GROUPS.items():
-    output_path = MAP_OUTPUT_DIR / group_spec["filename"]
-    m = build_group_map(group_key, group_spec)
-    m.save(output_path)
-    rendered_maps[group_key] = m
-    print(f"Saved {group_key}: {output_path}")
-```
-
-## Preview all available maps
-
-```{python}
-if rendered_maps:
-    for group_key, map_object in rendered_maps.items():
-        display(HTML(f"<h3>{AVAILABLE_MAP_GROUPS[group_key]['title']}</h3>"))
-        display(map_object)
-else:
-    display(
-        HTML(
-            """
-            <div style="padding: 12px; border: 1px solid #cc0000; background: #fff5f5;">
-              <b>No Economic/Food metric-group maps were rendered.</b>
-            </div>
-            """
-        )
+if not available_demographic_specs:
+    raise ValueError(
+        "No demographic backdrop columns are available in data/clean/economic-food.csv. "
+        "Make sure build.py merged a baseline file or that economic-food.csv already contains demographics."
     )
+
+print("Available primary map metrics:")
+for metric, spec in available_primary_specs.items():
+    print(f"  {metric}: {tracts[metric].notna().sum()} tracts -> {spec['filename']}")
+
+print("\nAvailable context metrics:")
+for metric, spec in available_context_specs.items():
+    print(f"  {metric}: {tracts[metric].notna().sum()} tracts")
+
+print("\nAvailable demographic backdrops:")
+for metric in available_demographic_specs:
+    print(f"  {metric}: {tracts[metric].notna().sum()} tracts")
+```
+
+## Add formatted context columns for tooltips
+
+```{python}
+def add_context_display_column(frame, metric, spec):
+    display_col = f"{metric}_display"
+    frame[display_col] = frame[metric].map(
+        lambda value: format_metric_value(value, spec["unit"])
+    )
+    return display_col
+
+
+context_display_columns = {}
+for metric, spec in {**available_context_specs, **available_primary_specs}.items():
+    if metric in tracts.columns:
+        context_display_columns[metric] = add_context_display_column(tracts, metric, spec)
+```
+
+## Render four maps
+
+```{python}
+rendered = {}
+
+for topic_name, topic in MAP_TOPICS.items():
+    primary_metric = topic["primary_metric"]
+    spec = available_primary_specs[primary_metric]
+    output_path = OUTPUT_DIR / spec["filename"]
+
+    tooltip_fields = ["tract_label", "nta_name"]
+    tooltip_aliases = ["Census tract", "NTA"]
+
+    for context_metric in topic["context_metrics"]:
+        if context_metric in context_display_columns:
+            tooltip_fields.append(context_display_columns[context_metric])
+            tooltip_aliases.append(
+                available_context_specs.get(context_metric, available_primary_specs.get(context_metric))["label"]
+            )
+
+    map_object = build_metric_bubble_map(
+        tracts=tracts,
+        metric_specs=available_primary_specs,
+        demographic_specs=available_demographic_specs,
+        metric=primary_metric,
+        title=topic["title"],
+        subtitle=topic["subtitle"],
+        output_path=output_path,
+        tooltip_fields=tooltip_fields,
+        tooltip_aliases=tooltip_aliases,
+    )
+
+    rendered[topic_name] = {
+        "metric": primary_metric,
+        "map": map_object,
+        "output_path": output_path,
+    }
+
+    print(f"Saved {topic_name}: {output_path.relative_to(PROJECT_DIR)}")
+
+print(f"\nRendered {len(rendered)} Economic/Food topic maps.")
+```
+
+## Preview first rendered map
+
+```{python}
+first_topic = next(iter(rendered))
+rendered[first_topic]["map"]
 ```
 
 ## Validation summary
 
 ```{python}
-map_summary = pd.DataFrame(
+summary = pd.DataFrame(
     [
         {
-            "metric_group": group_key,
-            "map_title": group_spec["title"],
-            "html_file": group_spec["filename"],
-            "bubble_metrics_included": ", ".join(group_spec["available_bubbles"]),
+            "topic": topic_name,
+            "primary_metric": details["metric"],
+            "label": available_primary_specs[details["metric"]]["label"],
+            "html_file": available_primary_specs[details["metric"]]["filename"],
+            "tracts_with_data": int(tracts[details["metric"]].notna().sum()),
+            "output_exists": details["output_path"].exists(),
+            "output_size_bytes": details["output_path"].stat().st_size,
         }
-        for group_key, group_spec in AVAILABLE_MAP_GROUPS.items()
+        for topic_name, details in rendered.items()
     ]
 )
-display(map_summary)
 
-missing_summary = pd.DataFrame(
-    [
-        {
-            "metric_group": group_key,
-            "expected_html_file": group_spec["filename"],
-            "target_metrics": ", ".join(group_spec["bubble_metrics"]),
-            "status": "missing because all target fields are absent or null",
-        }
-        for group_key, group_spec in MAP_GROUPS.items()
-        if group_key not in AVAILABLE_MAP_GROUPS
-    ]
-)
-display(missing_summary)
+display(summary)
 
-demographic_summary = pd.DataFrame(
-    [
-        {
-            "demographic_layer": metric,
-            "label": DEMOGRAPHIC_LAYERS[metric]["label"],
-            "tracts_with_data": int(tracts[metric].notna().sum()),
-            "min": tracts[metric].min(skipna=True),
-            "max": tracts[metric].max(skipna=True),
-        }
-        for metric in AVAILABLE_DEMOGRAPHIC_LAYERS
-    ]
-)
-display(demographic_summary)
-
-expected_files = [MAP_OUTPUT_DIR / spec["filename"] for spec in AVAILABLE_MAP_GROUPS.values()]
-for path in expected_files:
+for details in rendered.values():
+    path = details["output_path"]
     assert path.exists(), path
     assert path.stat().st_size > 10_000, path
 
-print(f"Wrote {len(expected_files)} metric-group HTML files to {MAP_OUTPUT_DIR}")
-for path in expected_files:
-    print(f"  {path.relative_to(PROJECT_DIR)}")
+print("Output files:")
+for topic_name, details in rendered.items():
+    print(f"  {topic_name}: {details['output_path'].relative_to(PROJECT_DIR)}")
 ```
