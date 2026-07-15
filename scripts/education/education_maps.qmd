@@ -26,16 +26,24 @@ if not (PROJECT_DIR / "src").exists():
 sys.path.insert(0, str(PROJECT_DIR))
 
 import yaml
+import folium
 import pandas as pd
 from IPython.display import display, HTML
 
 from src.cb3_utils import load_cb3_tract_universe
-from src.map_utils import add_metric_layer, make_base_map
+from src.map_utils import (
+    add_categorical_point_layer,
+    add_demographic_backdrop_layers,
+    add_map_title,
+    build_grouped_bubble_map,
+    build_metric_bubble_map,
+    make_base_map,
+)
 
 DOMAIN = "education"
 
 SCHOOL_LEVEL_PATH = PROJECT_DIR / "data" / "clean" / "EDUCATION_DOMAIN_school_level_analytic_file.csv"
-TRACT_LEVEL_PATH = PROJECT_DIR / "data" / "clean" / "EDUCATION_DOMAIN_tract_level_analytic_file.csv"
+BASELINE_PROFILE_PATH = PROJECT_DIR / "data" / "clean" / "cb3_tract_baseline_profile_clean.csv"
 CLEAN_OUTPUT_PATH = PROJECT_DIR / "data" / "clean" / "education.csv"
 METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
 MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "education"
@@ -75,41 +83,93 @@ display(
 ```
 
 
-## Load the official 31-tract CB3 universe and geometry
+## Load the official 31-tract CB3 universe, geometry, and demographic backdrop
 
 ```{python}
 tracts_lookup, cb3_tract_geometry, CB3_TRACT_CODES, CB3_GEOIDS = load_cb3_tract_universe(PROJECT_DIR)
+
+# Demographic backdrop layers (income, race/ethnicity, etc.) are shared across
+# domain notebooks, matching environment_maps.qmd's pattern, so school points
+# can be read against the same selectable choropleth context as other domains.
+baseline_profile = pd.read_csv(BASELINE_PROFILE_PATH, dtype={"geoid": "string"})
+baseline_profile["GEOID"] = baseline_profile["geoid"].str.zfill(11)
+
+DEMOGRAPHIC_COLUMNS = [
+    "GEOID",
+    "median_household_income",
+    "age_0_to_19_share",
+    "age_20_to_64_share",
+    "age_65_plus_share",
+    "white_non_hispanic_share",
+    "black_non_hispanic_share",
+    "asian_non_hispanic_share",
+    "hispanic_share",
+    "poverty_rate",
+    "lep_household_share",
+]
+
+tracts = cb3_tract_geometry.merge(
+    tracts_lookup[["GEOID", "tract_label", "nta_name"]],
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
+tracts = tracts.merge(
+    baseline_profile[DEMOGRAPHIC_COLUMNS],
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
+
+assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
+assert tracts["GEOID"].is_unique, "GEOID is not unique after merge."
 ```
 
 
-## Load tract-level under-5 population
-
-School level data does not have `GEOID`, so have to construct to generate the key.
+## Load metric metadata and build demographic specs
 
 ```{python}
-def load_tract_population(path):
-    """Load the tract-level ACS extract and return GEOID plus under-5 population.
-
-    Builds GEOID from the state/county/tract columns (same convention as
-    src.cb3_utils.add_acs_geoid) and validates against the 31-tract CB3 universe.
-    """
-    frame = pd.read_csv(path)
-    frame["GEOID"] = (
-        frame["state"].astype(int).astype(str).str.zfill(2)
-        + frame["county"].astype(int).astype(str).str.zfill(3)
-        + frame["tract"].astype(int).astype(str).str.zfill(6)
-    )
-    assert set(frame["GEOID"]) == CB3_GEOIDS, "Tract-level file does not match the 31 CB3 tracts."
-    return frame[["GEOID", "tot_under_5"]]
+with open(METADATA_PATH) as f:
+    ALL_METRICS = yaml.safe_load(f)
 
 
-tract_population = load_tract_population(TRACT_LEVEL_PATH)
+def _to_map_spec(meta, include_filename=False):
+    """Build an add_metric_layer/add_bubble_layer spec dict from one
+    metric_metadata.yml entry."""
+    spec = {
+        "dimension": meta["short_label"],
+        "label": meta["label"],
+        "unit": meta["unit"],
+        "palette": meta["palette"],
+    }
+    if include_filename:
+        spec["filename"] = meta["filename"]
+    for key in ("positive_values_only", "zero_color", "zero_label"):
+        if key in meta:
+            spec[key] = meta[key]
+    return spec
+
+
+# senior_poverty_rate is registered as a demographic metric for other domains'
+# notebooks (e.g. seniors), but is not featured as a backdrop layer here,
+# matching environment_maps.qmd's exclusion.
+EXCLUDED_DEMOGRAPHIC_METRICS = {"senior_poverty_rate"}
+
+DEMOGRAPHIC_SPECS = {
+    var: _to_map_spec(meta)
+    for var, meta in ALL_METRICS.items()
+    if meta["domain"] == "demographics" and var not in EXCLUDED_DEMOGRAPHIC_METRICS
+}
+
+METRIC_SPECS = {
+    var: _to_map_spec(meta, include_filename=True)
+    for var, meta in ALL_METRICS.items()
+    if meta.get("domain") == DOMAIN and "filename" in meta and "palette" in meta
+}
+
+for metric in DEMOGRAPHIC_SPECS:
+    assert metric in tracts.columns, f"{metric} missing from tracts"
 ```
-
-**Summary:** Reads the tract-level ACS extract, rebuilds the standard 11-digit
-GEOID from `state`/`county`/`tract`, and keeps only the under-5 population
-column needed for the seats-vs-population ratio. Verify: the assertion
-confirms all 31 CB3 tracts are present with no extras.
 
 
 ## Load school-level metrics and flag any schools outside the 31 CB3 tracts
@@ -122,8 +182,10 @@ def load_school_metrics(path, cb3_geoids):
     built directly from the school-level `tract` column (zero-padded to 6
     digits) rather than from state/county columns, which are not present in
     this file. Schools whose tract code does not match one of the 31 CB3
-    tracts are flagged and excluded from the tract aggregation, since we do
-    not have coordinates to geocode them as a fallback.
+    tracts are flagged and excluded, since we do not have coordinates to
+    geocode them as a fallback (though every remaining school already has its
+    own native `lat`/`long`, so no centroid or spatial join is needed for the
+    point maps below).
     """
     frame = pd.read_csv(path)
     frame["GEOID"] = "36061" + frame["tract"].astype(int).astype(str).str.zfill(6)
@@ -134,8 +196,8 @@ def load_school_metrics(path, cb3_geoids):
             HTML(
                 "<p><strong>Flagged:</strong> "
                 f"{len(unmatched)} school(s) have a tract code that does not match "
-                "any of the 31 CB3 tracts and are excluded from the tract "
-                "aggregation below (see 'name', 'tract' columns):</p>"
+                "any of the 31 CB3 tracts and are excluded below (see 'name', "
+                "'tract' columns):</p>"
                 + unmatched[["name", "tract", "GEOID"]].to_html(index=False)
             )
         )
@@ -153,170 +215,260 @@ which does not match the split tracts `4001`/`4002`) is expected to appear
 and is excluded rather than guessed at.
 
 
-## Aggregate school-level metrics to the tract level
+## Classify each school's enrollment type
 
 ```{python}
-def aggregate_school_metrics_to_tract(school_frame, cb3_geoids):
-    """Sum school-level metrics up to one row per CB3 tract.
-
-    Uses sum(min_count=1) rather than plain sum, since pandas' default sum
-    treats an all-missing group as summing to 0 rather than NaN — which would
-    otherwise turn "no school in this tract reported this metric" into a
-    false "$0 raised" or "0 students in temporary housing." A school with no
-    PreK program contributes a real 0 to the tract total (it's not missing
-    data), but a school that simply didn't report PTA revenue contributes
-    nothing countable. Tracts with no schools at all also get NaN for every
-    metric, for the same reason. PreK and 3-K seats are kept as separate
-    metrics rather than combined, since they are different programs.
-    """
-    grouped = school_frame.groupby("GEOID").agg(
-        school_count=("GEOID", "size"),
-        pta_fundraising_total=("pta_tot_inc", lambda values: values.sum(min_count=1)),
-        n_students_temp_housing_total=("n_students_temp_housing", lambda values: values.sum(min_count=1)),
-        prek_seats_total=("prek_seats_2122", lambda values: values.sum(min_count=1)),
-        threek_seats_total=("threek_seats_2122", lambda values: values.sum(min_count=1)),
-    )
-
-    # Reindex to all 31 CB3 tracts so tracts with zero schools are represented.
-    grouped = grouped.reindex(sorted(cb3_geoids))
-    grouped["school_count"] = grouped["school_count"].fillna(0)
-
-    no_school_mask = grouped["school_count"] == 0
-    metric_columns = [
-        "pta_fundraising_total",
-        "n_students_temp_housing_total",
-        "prek_seats_total",
-        "threek_seats_total",
-    ]
-    grouped.loc[no_school_mask, metric_columns] = pd.NA
-
-    return grouped.reset_index()
-
-
-tract_school_metrics = aggregate_school_metrics_to_tract(school_metrics, CB3_GEOIDS)
-```
-
-**Summary:** Groups the 41 matched schools by tract, summing PTA income,
-students in temporary housing, PreK seats, and 3-K seats (kept separate),
-then reindexes to all 31 CB3 tracts so tracts with no school show up as
-missing (gray on the map) rather than zero. Verify: spot-check
-`school_count` against a known multi-school tract, and confirm tracts with
-`school_count == 0` show `NaN` for all four metric columns.
-
-
-## Combine into one tract-level education table and compute the seats ratio
-
-```{python}
-def build_education_tract_table(tract_school_metrics, tract_population):
-    """Join aggregated school metrics to under-5 population and compute the
-    PreK and 3-K seats coverage ratios (seats per 100 children under 5), kept
-    as two separate metrics since PreK and 3-K are different programs.
-    """
-    combined = tract_school_metrics.merge(tract_population, on="GEOID", how="left", validate="one_to_one")
-    combined["prek_seats_per_100_under5"] = combined["prek_seats_total"] / combined["tot_under_5"] * 100
-    combined["threek_seats_per_100_under5"] = combined["threek_seats_total"] / combined["tot_under_5"] * 100
-    return combined
-
-
-education_tracts = build_education_tract_table(tract_school_metrics, tract_population)
-education_tracts.to_csv(CLEAN_OUTPUT_PATH, index=False)
-```
-
-**Summary:** Merges the tract-level school aggregates with under-5
-population and computes PreK and 3-K seats per 100 under-5 children as two
-separate columns, then writes the one-row-per-tract table to
-`data/clean/education.csv`. Verify: confirm the output has exactly 31 rows
-and that both ratio columns are `NaN` wherever the corresponding seats total
-is `NaN` (no schools in tract).
-
-
-## Join metrics to tract geometry for mapping
-
-```{python}
-tracts = cb3_tract_geometry.merge(education_tracts, on="GEOID", how="left", validate="one_to_one")
-tracts = tracts.merge(
-    tracts_lookup[["GEOID", "tract_label", "nta_name"]],
-    on="GEOID",
-    how="left",
-    validate="one_to_one",
-)
-
-assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
-assert tracts["GEOID"].is_unique, "GEOID is not unique after merge."
-```
-
-
-## Load metric metadata and select education metrics to map
-
-```{python}
-with open(METADATA_PATH) as f:
-    all_metrics = yaml.safe_load(f)
-
-metric_specs = {
-    var: meta
-    for var, meta in all_metrics.items()
-    if meta.get("domain") == DOMAIN
+# The school-level analytic file's own `type` column already distinguishes
+# general admission, charter, special education, and transfer schools, so no
+# additional data source is needed.
+ENROLLMENT_TYPE_LABELS = {
+    "General Academic": "General admission",
+    "General Academic - Charter": "General admission - charter",
+    "Special Education": "Special education",
+    "Transfer School": "Transfer school",
 }
 
-metrics_to_map = [
-    "pta_fundraising_total",
-    "n_students_temp_housing_total",
-    "prek_seats_per_100_under5",
-    "threek_seats_per_100_under5",
-]
 
-metrics_to_map = [
-    metric
-    for metric in metrics_to_map
-    if metric in metric_specs and metric in tracts.columns
-]
-
-if not metrics_to_map:
-    raise ValueError(
-        "No education metrics found to map. Check docs/metric_metadata.yml "
-        "and data/clean/education.csv."
-    )
+def classify_enrollment_type(type_value):
+    """Map the raw `type` column value to its display label for the
+    enrollment-type map layer."""
+    return ENROLLMENT_TYPE_LABELS[type_value]
 ```
 
+**Summary:** Renames the school-level file's existing `type` values (General
+Academic, General Academic - Charter, Special Education, Transfer School)
+into display labels for the enrollment-type map layer. Verify: confirm every
+school's `type` value is one of the 4 keys in `ENROLLMENT_TYPE_LABELS` (a
+`KeyError` below would mean a new/unexpected `type` value showed up in the
+source file).
 
-## Create one map per metric
+
+## Build the school-level clean table
 
 ```{python}
-for metric in metrics_to_map:
-    meta = metric_specs[metric]
+def build_education_school_table(school_frame, tracts_lookup):
+    """Attach tract/NTA labels for tooltips and select the columns needed for
+    the school-level point maps and clean CSV export.
+
+    Schools are the unit of analysis now (not tracts), since PTA fundraising,
+    students in temporary housing, PreK/3-K seats, and IEP rate are
+    properties of an individual school, not something meaningfully summed
+    across a tract.
+    """
+    combined = school_frame.merge(
+        tracts_lookup[["GEOID", "tract_label", "nta_name"]],
+        on="GEOID",
+        how="left",
+        validate="many_to_one",
+    )
+    # pct_iep_2122 arrives as a "21.2%"-style string; strip the percent sign
+    # to get a plottable numeric rate.
+    combined["pct_iep_2122"] = combined["pct_iep_2122"].str.rstrip("%").astype(float)
+    # District 75 (admin_district 75) serves students with significant
+    # disabilities; flagged separately since a very high IEP rate there
+    # reflects that specialized mission rather than being comparable to a
+    # general-education school's rate.
+    combined["is_d75"] = combined["admin_district"].eq(75)
+    combined["enrollment_type"] = combined["type"].map(classify_enrollment_type)
+    columns = [
+        "GEOID", "name", "tract_label", "nta_name", "lat", "long", "is_d75",
+        "enrollment_type",
+        "pta_tot_inc", "n_students_temp_housing", "prek_seats_2122", "threek_seats_2122",
+        "pct_iep_2122",
+    ]
+    return combined[columns]
+
+
+education_schools = build_education_school_table(school_metrics, tracts_lookup)
+education_schools.to_csv(CLEAN_OUTPUT_PATH, index=False)
+```
+
+**Summary:** Merges each school with its tract/NTA label and writes the
+41-row (one per matched school), GEOID-tagged table to
+`data/clean/education.csv` — no aggregation, since each row is already a
+single school with its own coordinates. Verify: confirm the output has one
+row per school (41 rows) and that `lat`/`long` are populated for every row.
+
+
+## Create one point map per metric
+
+```{python}
+# District 75 schools serve students with significant disabilities, so their
+# IEP rate isn't comparable to a general-education school's — flagged as a
+# separate categorical overlay on the IEP rate map rather than folded into
+# the bubble layer, matching environment_maps.qmd's NYCHA-building overlay
+# pattern.
+D75_COLOR = {"District 75 school": "#252525"}
+d75_points = education_schools.loc[education_schools["is_d75"]].assign(
+    category="District 75 school"
+)
+
+
+def add_d75_overlay(map_object, show=True):
+    add_categorical_point_layer(
+        map_object,
+        d75_points,
+        "category",
+        D75_COLOR,
+        name="District 75 schools",
+        lat_col="lat",
+        lon_col="long",
+        tooltip_fields=["name", "tract_label"],
+        tooltip_aliases=["School", "Census tract"],
+        show=show,
+    )
+
+
+def create_school_metric_map(metric, extra_layers=None):
+    """Build and save a bubble map for one education metric, with schools
+    plotted at their own coordinates over a selectable demographic backdrop,
+    matching environment_maps.qmd's point-metric pattern.
+    """
+    spec = METRIC_SPECS[metric]
 
     display(
         HTML(
             f"""
             <div class="education-map-title">
-                {meta["label"]}
+                {spec["label"]}
             </div>
             """
         )
     )
 
-    spec = {
-        "dimension": meta["short_label"],
-        "label": meta["label"],
-        "unit": meta["unit"],
-        "palette": meta["palette"],
-    }
-
-    for optional_key in ["positive_values_only", "zero_color", "zero_label"]:
-        if optional_key in meta:
-            spec[optional_key] = meta[optional_key]
-
-    m = make_base_map(tracts)
-
-    add_metric_layer(
-        m,
+    m = build_metric_bubble_map(
         tracts,
+        METRIC_SPECS,
+        DEMOGRAPHIC_SPECS,
         metric,
-        spec,
-        show=True,
-        overlay=False,
+        title=f"CB3 Education: {spec['dimension']}",
+        output_path=MAP_OUTPUT_DIR / spec["filename"],
+        points=education_schools,
+        lat_col="lat",
+        lon_col="long",
+        tooltip_fields=["name", "tract_label"],
+        tooltip_aliases=["School", "Census tract"],
+        extra_layers=extra_layers,
     )
-
-    m.save(MAP_OUTPUT_DIR / meta["filename"])
     display(m)
+    return m
+
+
+maps = {
+    metric: create_school_metric_map(
+        metric, extra_layers=add_d75_overlay if metric == "pct_iep_2122" else None
+    )
+    for metric in METRIC_SPECS
+}
+```
+
+
+## Combined PreK vs 3-K seats map
+
+```{python}
+# PreK and 3-K are different programs (see metric_metadata.yml), so they get
+# their own individual maps above, plus this combined view with both as
+# selectable bubble layers on one map for side-by-side comparison, matching
+# housing_and_affordability_maps.qmd's Class B vs Class C pattern.
+prek_and_threek_output_path = MAP_OUTPUT_DIR / "prek_and_threek_seats.html"
+
+display(
+    HTML(
+        """
+        <div class="education-map-title">
+            PreK vs 3-K seats
+        </div>
+        """
+    )
+)
+
+prek_and_threek_map = build_grouped_bubble_map(
+    tracts,
+    METRIC_SPECS,
+    DEMOGRAPHIC_SPECS,
+    ["prek_seats_2122", "threek_seats_2122"],
+    title="CB3 Education: PreK vs 3-K seats",
+    subtitle=(
+        "Choropleth: use the layer control to pick a demographic fill. Bubbles: "
+        "size shows seats at each school, split into two selectable layers by "
+        "program (PreK, 3-K)."
+    ),
+    output_path=prek_and_threek_output_path,
+    points=education_schools,
+    lat_col="lat",
+    lon_col="long",
+    tooltip_fields=["name", "tract_label"],
+    tooltip_aliases=["School", "Census tract"],
+)
+display(prek_and_threek_map)
+```
+
+
+## School enrollment type map
+
+```{python}
+# Categorical, not a magnitude, so this is its own point layer (no bubble
+# sizing) built directly from the generic layer helpers, matching
+# environment_maps.qmd's street-tree-health map.
+ENROLLMENT_TYPE_COLORS = ALL_METRICS["enrollment_type"]["category_colors"]
+ENROLLMENT_TYPE_OUTPUT_PATH = MAP_OUTPUT_DIR / ALL_METRICS["enrollment_type"]["filename"]
+
+display(
+    HTML(
+        """
+        <div class="education-map-title">
+            School enrollment type
+        </div>
+        """
+    )
+)
+
+
+def create_enrollment_type_map():
+    map_object = make_base_map(tracts)
+    add_demographic_backdrop_layers(map_object, tracts, DEMOGRAPHIC_SPECS)
+    add_categorical_point_layer(
+        map_object,
+        education_schools,
+        "enrollment_type",
+        ENROLLMENT_TYPE_COLORS,
+        name="School enrollment type",
+        lat_col="lat",
+        lon_col="long",
+        tooltip_fields=["name", "tract_label"],
+        tooltip_aliases=["School", "Census tract"],
+        show=True,
+    )
+    add_map_title(
+        map_object,
+        "CB3 Education: School Enrollment Type",
+        "Choropleth: use the layer control to pick a demographic fill. Points: each "
+        "school colored by enrollment type (General admission, General admission - "
+        "charter, Special education, or Transfer school).",
+    )
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(ENROLLMENT_TYPE_OUTPUT_PATH)
+    return map_object
+
+
+enrollment_type_map = create_enrollment_type_map()
+display(enrollment_type_map)
+```
+
+
+## Output validation
+
+```{python}
+expected_map_files = [
+    MAP_OUTPUT_DIR / spec["filename"] for spec in METRIC_SPECS.values()
+] + [
+    prek_and_threek_output_path,
+    ENROLLMENT_TYPE_OUTPUT_PATH,
+]
+
+for map_file in expected_map_files:
+    assert map_file.exists()
+    assert map_file.stat().st_size > 10_000
+
+print(f"Wrote {len(expected_map_files)} map files to {MAP_OUTPUT_DIR}")
 ```

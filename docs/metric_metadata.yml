@@ -653,80 +653,125 @@ food_supply_gap_score:
 
 # --- Education ---
 
-pta_fundraising_total:
+pta_tot_inc:
   domain: education
   short_label: PTA fundraising
-  label: Total PTA income, summed across schools in tract
+  label: Total PTA income, per school
   description: >
-    Sum of reported total PTA income (pta_tot_inc) across all public schools
-    located in the tract. Tracts with no schools are shown as missing rather
-    than $0, since PTA fundraising is not a meaningful concept where there is
-    no school.
+    Reported total PTA income (pta_tot_inc) at each individual public school,
+    plotted at the school's own coordinates rather than summed to the tract,
+    since PTA fundraising is a property of a specific school's community, not
+    a tract.
   unit: "$"
   palette: ["#f7fcf5", "#c7e9c0", "#74c476", "#238b45", "#00441b"]
   source: NYC PTA financial reporting 2024–25, joined to LCGMS school locator
   year: 2025
-  geography: Census tract (aggregated from school points)
+  geography: School point (native coordinates)
   map_classification: quintile
   display_format: dollar
-  filename: pta_fundraising_total.html
+  filename: pta_fundraising.html
 
-n_students_temp_housing_total:
+n_students_temp_housing:
   domain: education
   short_label: Students in temporary housing
-  label: Students in temporary housing, summed across schools in tract
+  label: Students in temporary housing, per school
   description: >
-    Sum of reported students in temporary housing (n_students_temp_housing)
-    across all public schools located in the tract. Tracts with no schools
-    are shown as missing rather than 0.
+    Reported count of students in temporary housing (n_students_temp_housing)
+    at each individual public school, plotted at the school's own
+    coordinates rather than summed to the tract.
   unit: " students"
   palette: ["#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"]
   source: NYC DOE Students in Temporary Housing report 2025, joined to LCGMS school locator
   year: 2025
-  geography: Census tract (aggregated from school points)
+  geography: School point (native coordinates)
   higher_is: worse
   map_classification: quintile
   display_format: count
-  filename: n_students_temp_housing_total.html
+  filename: n_students_temp_housing.html
 
-prek_seats_per_100_under5:
+prek_seats_2122:
   domain: education
-  short_label: PreK seat coverage
-  label: PreK seats per 100 children under age 5
+  short_label: PreK seats
+  label: PreK seats, per school
   description: >
-    Sum of PreK seats (prek_seats_2122) across all public schools in the
-    tract, divided by the tract's under-5 population (ACS table B01001) and
-    multiplied by 100. Tracts with no schools are shown as missing. Note that
-    CB3's District 1 uses citywide/choice-based elementary enrollment rather
-    than neighborhood zoning, so a school's seats are not necessarily meant
-    to serve only the tract it sits in — tracts with few residents but a
-    large school building can show high or extreme ratios.
-  unit: " seats per 100 children"
+    Reported PreK seat count (prek_seats_2122) at each individual public
+    school, plotted at the school's own coordinates rather than summed to the
+    tract or scaled by tract population. Note that CB3's District 1 uses
+    citywide/choice-based elementary enrollment rather than neighborhood
+    zoning, so a school's seats are not necessarily meant to serve only the
+    tract it sits in.
+  unit: " seats"
   palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
-  source: "NYC DOE PreK seat counts (2021–22 SY), joined to LCGMS school locator; denominator from ACS 5-year estimates, table B01001"
+  source: "NYC DOE PreK seat counts (2021–22 SY), joined to LCGMS school locator"
   year: 2022
-  geography: Census tract (aggregated from school points; population from ACS)
+  geography: School point (native coordinates)
   higher_is: better
   map_classification: quintile
-  display_format: rate
-  filename: prek_seats_per_100_under5.html
+  display_format: count
+  filename: prek_seats.html
 
-threek_seats_per_100_under5:
+threek_seats_2122:
   domain: education
-  short_label: 3-K seat coverage
-  label: 3-K seats per 100 children under age 5
+  short_label: 3-K seats
+  label: 3-K seats, per school
   description: >
-    Sum of 3-K seats (threek_seats_2122) across all public schools in the
-    tract, divided by the tract's under-5 population (ACS table B01001) and
-    multiplied by 100. Tracts with no schools are shown as missing. Same
-    zoning caveat as PreK seat coverage: District 1 enrollment is
-    citywide/choice-based, not neighborhood-zoned.
-  unit: " seats per 100 children"
+    Reported 3-K seat count (threek_seats_2122) at each individual public
+    school, plotted at the school's own coordinates rather than summed to
+    the tract or scaled by tract population. Same zoning caveat as PreK
+    seats: District 1 enrollment is citywide/choice-based, not
+    neighborhood-zoned.
+  unit: " seats"
   palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
-  source: "NYC DOE 3-K seat counts (2021–22 SY), joined to LCGMS school locator; denominator from ACS 5-year estimates, table B01001"
+  source: "NYC DOE 3-K seat counts (2021–22 SY), joined to LCGMS school locator"
   year: 2022
-  geography: Census tract (aggregated from school points; population from ACS)
+  geography: School point (native coordinates)
   higher_is: better
   map_classification: quintile
-  display_format: rate
-  filename: threek_seats_per_100_under5.html
+  display_format: count
+  filename: threek_seats.html
+
+pct_iep_2122:
+  domain: education
+  short_label: Students with IEPs
+  label: Students with disabilities receiving special education services (IEP rate), per school
+  description: >
+    Rate of students classified as having a disability and receiving special
+    education services (IEP rate) at each individual public school, plotted
+    at the school's own coordinates. District 75 schools (serving students
+    with significant disabilities) are flagged separately on the map, since
+    their very high IEP rate reflects that specialized mission rather than
+    being comparable to a general-education school's rate. Notable given
+    CB3's building accessibility gap (only 21.4% of CB3 schools are fully
+    accessible per NYC IBO's Barriers to Learning, March 2025), which creates
+    a structural mismatch between where students with disabilities may need
+    to be served and where accessible buildings exist.
+  unit: "%"
+  palette: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"]
+  source: "NYC DOE Demographic Snapshot (annual, NYC Open Data, '% Students with Disabilities' field); NYC IBO Barriers to Learning, March 2025; NYC DOE LCGMS (District 75 school flag)"
+  year: 2022
+  geography: School point (native coordinates)
+  map_classification: quintile
+  display_format: percent
+  filename: iep_rate.html
+
+enrollment_type:
+  domain: education
+  short_label: School type (enrollment & governance)
+  label: School enrollment type
+  description: >
+    Each CB3 school classified using the school-level file's own `type`
+    column: General admission, General admission - charter, Special
+    education, or Transfer school. Lets readers see whether resource
+    disparities (PTA funds, overcrowding, accessibility) align with school
+    type.
+  category_colors:
+    General admission: "#1b9e77"
+    General admission - charter: "#e7298a"
+    Special education: "#666666"
+    Transfer school: "#66a61e"
+  source: "NYC DOE LCGMS (type field)"
+  year: 2025
+  geography: School point (native coordinates)
+  map_classification: categorical
+  display_format: category
+  filename: enrollment_type.html
