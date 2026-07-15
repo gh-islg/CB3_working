@@ -1,207 +1,716 @@
 ---
+title: "CB3 Equity Report — Health Maps"
 format:
   html:
-    self-contained: true
+    toc: true
+    code-fold: true
 execute:
-  echo: false
+  echo: true
   warning: false
   message: false
+jupyter: python3
 ---
 
+## Purpose
+
+Render Health-domain maps using the current shared mapping utilities:
+
+- demographic tract layers are selectable map backgrounds;
+- Health metrics are bubbles;
+- provider locations are point overlays;
+- pediatric asthma stays NTA-level, shown as NTA-centroid bubbles;
+- life expectancy stays a community-district KPI.
+
 ```{python}
-import sys
 from pathlib import Path
-
-# ------------------------------------------------------------
-# Find project root and make src/ importable
-# ------------------------------------------------------------
-PROJECT_DIR = Path.cwd()
-
-while not (PROJECT_DIR / "src").exists() and PROJECT_DIR != PROJECT_DIR.parent:
-    PROJECT_DIR = PROJECT_DIR.parent
-
-if not (PROJECT_DIR / "src").exists():
-    raise FileNotFoundError("Could not find project root containing src/ folder.")
-
-sys.path.insert(0, str(PROJECT_DIR))
-
+import html
+import sys
 import yaml
-import pandas as pd
-import geopandas as gpd
-from IPython.display import display, HTML
 
+import folium
+import pandas as pd
+
+# Make src/ importable whether Quarto is rendered from project root or scripts/health.
+for candidate in [Path.cwd(), *Path.cwd().parents]:
+    if (candidate / "src" / "map_utils.py").exists():
+        sys.path.insert(0, str(candidate))
+        break
+
+from src.cb3_utils import load_cb3_tract_universe
 from src.map_utils import (
-    add_metric_layer,
+    add_demographic_backdrop_layers,
+    add_map_title,
+    add_zero_value_legend,
+    build_metric_bubble_map,
+    find_project_dir,
     make_base_map,
 )
+```
 
-DOMAIN = "health"
+```{python}
+PROJECT_DIR = find_project_dir()
+CLEAN_DIR = PROJECT_DIR / "data" / "clean"
+MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "health"
+MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-CLEAN_PATH = PROJECT_DIR / "data" / "clean" / "health.csv"
-GEOGRAPHY_PATH = PROJECT_DIR / "data" / "raw" / "Geography" / "cb3_2020_census_tracts.geojson"
+HEALTH_TRACT_PATH = CLEAN_DIR / "health_tract.csv"
+HEALTH_NTA_PATH = CLEAN_DIR / "health_nta.csv"
+FQHC_PATH = CLEAN_DIR / "health_providers_geocoded.csv"
+MENTAL_HEALTH_PATH = CLEAN_DIR / "mental_health_sites_geocoded.csv"
+LIFE_PATH = CLEAN_DIR / "health_cd.csv"
 METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
 
+with open(METADATA_PATH, encoding="utf-8") as f:
+    loaded_metric_metadata = yaml.safe_load(f) or {}
+```
 
-# ------------------------------------------------------------
-# Page-level CSS
-# ------------------------------------------------------------
-display(
-    HTML(
-        """
-        <style>
-        h1.title {
-            display: none;
-        }
+## Prepare geometry, metrics, and demographic backdrops
 
-        .quarto-title-block {
-            display: none;
-        }
+```{python}
+DEFAULT_HEALTH_METADATA = {
+    "fair_or_poor_general_health_pct": {
+        "domain": "health",
+        "short_label": "Fair or poor general health",
+        "label": "Adults reporting fair or poor general health",
+        "unit": "%",
+        "filename": "fair_or_poor_general_health.html",
+    },
+    "diagnosed_diabetes_pct": {
+        "domain": "health",
+        "short_label": "Diagnosed diabetes",
+        "label": "Adults with diagnosed diabetes",
+        "unit": "%",
+        "filename": "diagnosed_diabetes.html",
+    },
+    "uninsured_adults_pct": {
+        "domain": "health",
+        "short_label": "Uninsured adults",
+        "label": "Adults without health insurance",
+        "unit": "%",
+        "filename": "uninsured_adults.html",
+    },
+    "pediatric_asthma_ed_rate": {
+        "domain": "health",
+        "short_label": "Pediatric asthma ED visits",
+        "label": "Pediatric asthma emergency department visit rate",
+        "unit": "per 10,000 children",
+        "filename": "pediatric_asthma_ed_rate.html",
+    },
+}
 
-        .cell-output-stdout {
-            display: none;
-        }
+ALL_METRICS = {**DEFAULT_HEALTH_METADATA, **loaded_metric_metadata}
 
-        .leaflet-control-container .legend,
-        .leaflet-control-container .branca,
-        .leaflet-control-container .colormap,
-        .leaflet-control-container .leaflet-control {
-            font-size: 12px;
-        }
-
-        .leaflet-top.leaflet-left {
-            left: auto !important;
-            right: 10px !important;
-        }
-
-        .leaflet-top.leaflet-left .leaflet-control {
-            margin-left: 0 !important;
-            margin-right: 10px !important;
-        }
-
-        .leaflet-control-layers {
-            display: none;
-        }
-
-        .health-map-title {
-            font-family: Arial, sans-serif;
-            font-size: 18px;
-            font-weight: 700;
-            margin-top: 24px;
-            margin-bottom: 8px;
-        }
-        </style>
-        """
-    )
-)
+DEFAULT_HEALTH_PALETTE = [
+    "#f7fbff",
+    "#deebf7",
+    "#c6dbef",
+    "#9ecae1",
+    "#6baed6",
+    "#3182bd",
+    "#08519c",
+]
 
 
-# ------------------------------------------------------------
-# Load clean health data
-# ------------------------------------------------------------
-clean = pd.read_csv(CLEAN_PATH, dtype={"GEOID": str})
-clean["GEOID"] = clean["GEOID"].astype(str).str.zfill(11)
+def _to_map_spec(meta, include_filename=False, default_palette=DEFAULT_HEALTH_PALETTE):
+    """Convert metric_metadata.yml entries into the map_utils spec shape."""
+    spec = {
+        "dimension": meta.get("short_label", meta.get("label", "")),
+        "label": meta.get("label", meta.get("short_label", "")),
+        "unit": meta.get("unit", ""),
+        "palette": meta.get("palette", default_palette),
+    }
+    if include_filename:
+        spec["filename"] = meta["filename"]
+    for key in ("positive_values_only", "zero_color", "zero_label"):
+        if key in meta:
+            spec[key] = meta[key]
+    return spec
 
 
-# ------------------------------------------------------------
-# Load CB3 tract geography
-# ------------------------------------------------------------
-tracts = gpd.read_file(GEOGRAPHY_PATH)
-tracts.columns = tracts.columns.str.strip()
+def _read_points(path, inside_only=False):
+    if not path.exists():
+        return pd.DataFrame()
 
-if "GEOID" not in tracts.columns:
-    if "geoid" in tracts.columns:
-        tracts = tracts.rename(columns={"geoid": "GEOID"})
-    else:
-        raise ValueError("Could not find GEOID/geoid column in CB3 geography file.")
+    frame = pd.read_csv(path, dtype=str)
+    frame["latitude"] = pd.to_numeric(frame.get("latitude"), errors="coerce")
+    frame["longitude"] = pd.to_numeric(frame.get("longitude"), errors="coerce")
 
-tracts["GEOID"] = tracts["GEOID"].astype(str).str.zfill(11)
+    if inside_only and "inside_cb3" in frame.columns:
+        frame = frame.loc[
+            frame["inside_cb3"].astype(str).str.lower().eq("true")
+        ].copy()
+
+    return frame.dropna(subset=["latitude", "longitude"])
 
 
-# ------------------------------------------------------------
-# Join clean metrics to geography
-# ------------------------------------------------------------
-tracts = tracts.merge(
-    clean,
+tract_universe, cb3_geometry, _, _ = load_cb3_tract_universe(PROJECT_DIR)
+
+health_tract = pd.read_csv(HEALTH_TRACT_PATH, dtype={"GEOID": "string"})
+health_tract["GEOID"] = health_tract["GEOID"].astype("string").str.zfill(11)
+
+tracts = cb3_geometry.merge(
+    tract_universe.drop(columns="geometry", errors="ignore"),
     on="GEOID",
     how="left",
     validate="one_to_one",
 )
 
-assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
-assert tracts["GEOID"].is_unique, "GEOID is not unique after merge."
+health_columns = [
+    column for column in health_tract.columns
+    if column == "GEOID" or column not in tracts.columns
+]
+tracts = tracts.merge(
+    health_tract[health_columns],
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
 
+tracts = tracts.to_crs("EPSG:4326")
 
-# ------------------------------------------------------------
-# Load metric metadata
-# ------------------------------------------------------------
-with open(METADATA_PATH) as f:
-    all_metrics = yaml.safe_load(f)
+assert len(tracts) == 31
+assert tracts["GEOID"].is_unique
+```
 
-metric_specs = {
-    var: meta
-    for var, meta in all_metrics.items()
-    if meta.get("domain") == DOMAIN
+```{python}
+DEMOGRAPHIC_COLUMNS = [
+    "median_household_income",
+    "age_0_to_19_share",
+    "age_20_to_64_share",
+    "age_65_plus_share",
+    "white_non_hispanic_share",
+    "black_non_hispanic_share",
+    "asian_non_hispanic_share",
+    "hispanic_share",
+    "poverty_rate",
+    "senior_poverty_rate",
+    "lep_household_share",
+]
+
+BASELINE_PROFILE_CANDIDATES = [
+    CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv",
+    CLEAN_DIR / "tract_baseline_profile_clean.csv",
+    CLEAN_DIR / "tract_baseline_profile.csv",
+    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
+    CLEAN_DIR / "demographics_tract.csv",
+    CLEAN_DIR / "demographic_tract.csv",
+    CLEAN_DIR / "demographic_baseline_tract.csv",
+    CLEAN_DIR / "language.csv",
+    CLEAN_DIR / "economic-food.csv",
+]
+
+baseline_profile = pd.DataFrame({"GEOID": sorted(tracts["GEOID"].astype(str).unique())})
+used_baseline_files = []
+
+for path in BASELINE_PROFILE_CANDIDATES:
+    if not path.exists():
+        continue
+
+    candidate = pd.read_csv(path, dtype={"geoid": "string", "GEOID": "string"})
+    if "GEOID" not in candidate.columns:
+        if "geoid" in candidate.columns:
+            candidate = candidate.rename(columns={"geoid": "GEOID"})
+        else:
+            continue
+
+    candidate["GEOID"] = candidate["GEOID"].astype("string").str.zfill(11)
+    candidate = candidate[candidate["GEOID"].isin(baseline_profile["GEOID"])].copy()
+
+    if "poverty_rate" not in candidate.columns and "poverty_rate_pct" in candidate.columns:
+        candidate["poverty_rate"] = candidate["poverty_rate_pct"]
+
+    keep = ["GEOID"] + [
+        column for column in DEMOGRAPHIC_COLUMNS
+        if column in candidate.columns
+    ]
+
+    if len(keep) <= 1:
+        continue
+
+    piece = candidate[keep].drop_duplicates("GEOID").copy()
+    duplicate_columns = [
+        column for column in piece.columns
+        if column != "GEOID" and column in baseline_profile.columns
+    ]
+    piece = piece.drop(columns=duplicate_columns)
+
+    if len(piece.columns) <= 1:
+        continue
+
+    baseline_profile = baseline_profile.merge(piece, on="GEOID", how="left", validate="one_to_one")
+    used_baseline_files.append(path.name)
+
+if used_baseline_files:
+    print("Using demographic context from: " + ", ".join(used_baseline_files))
+else:
+    print("Warning: no demographic clean file found; maps will use the plain outline option only.")
+
+tracts = tracts.merge(
+    baseline_profile,
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
+
+for column in DEMOGRAPHIC_COLUMNS:
+    if column in tracts.columns:
+        tracts[column] = pd.to_numeric(tracts[column], errors="coerce")
+```
+
+```{python}
+TRACT_METRICS = [
+    "fair_or_poor_general_health_pct",
+    "diagnosed_diabetes_pct",
+    "uninsured_adults_pct",
+]
+NTA_METRIC = "pediatric_asthma_ed_rate"
+HEALTH_METRICS = TRACT_METRICS + [NTA_METRIC]
+
+METRIC_SPECS = {
+    metric: _to_map_spec(ALL_METRICS[metric], include_filename=True)
+    for metric in HEALTH_METRICS
 }
 
+DEMOGRAPHIC_SPECS = {
+    variable: _to_map_spec(metadata)
+    for variable, metadata in ALL_METRICS.items()
+    if metadata.get("domain") == "demographics"
+    and variable in tracts.columns
+    and pd.to_numeric(tracts[variable], errors="coerce").notna().any()
+}
 
-# ------------------------------------------------------------
-# Select health metrics to map
-# ------------------------------------------------------------
-metrics_to_map = [
-    "uninsured_adults_pct",
-    "no_routine_checkup_pct",
-]
+for metric in TRACT_METRICS:
+    assert metric in tracts.columns, f"{metric} missing from health_tract.csv"
 
-metrics_to_map = [
-    metric
-    for metric in metrics_to_map
-    if metric in metric_specs and metric in tracts.columns
-]
+for coord in ["tract_centroid_latitude", "tract_centroid_longitude"]:
+    assert coord in tracts.columns, f"{coord} missing from health_tract.csv. Rerun scripts.health.build."
 
-if not metrics_to_map:
-    raise ValueError(
-        "No health metrics found to map. Check docs/metric_metadata.yml "
-        "and data/clean/health.csv."
+print(f"Registered Health metrics: {list(METRIC_SPECS)}")
+print(f"Available demographic backdrop layers: {list(DEMOGRAPHIC_SPECS)}")
+```
+
+## Prepare NTA asthma points
+
+```{python}
+health_nta = pd.read_csv(HEALTH_NTA_PATH, dtype=str)
+health_nta[NTA_METRIC] = pd.to_numeric(health_nta[NTA_METRIC], errors="coerce")
+health_nta["nta_centroid_latitude"] = pd.to_numeric(
+    health_nta.get("nta_centroid_latitude"),
+    errors="coerce",
+)
+health_nta["nta_centroid_longitude"] = pd.to_numeric(
+    health_nta.get("nta_centroid_longitude"),
+    errors="coerce",
+)
+
+asthma_points = health_nta.dropna(
+    subset=[NTA_METRIC, "nta_centroid_latitude", "nta_centroid_longitude"]
+).copy()
+
+assert not asthma_points.empty, "No pediatric asthma NTA points available. Rerun build.py and check NTA centroid matching."
+```
+
+## Provider overlays
+
+```{python}
+fqhc = _read_points(FQHC_PATH, inside_only=True)
+mental_health = _read_points(MENTAL_HEALTH_PATH)
+life = pd.read_csv(LIFE_PATH, dtype=str) if LIFE_PATH.exists() else pd.DataFrame()
+
+
+def _popup_text(row, name_fields, address_fields=None, extra_fields=None):
+    name = next(
+        (
+            row.get(field)
+            for field in name_fields
+            if pd.notna(row.get(field)) and str(row.get(field)).strip()
+        ),
+        "Provider site",
     )
+    parts = [f"<strong>{html.escape(str(name))}</strong>"]
+
+    for field in address_fields or []:
+        value = row.get(field)
+        if pd.notna(value) and str(value).strip():
+            parts.append(html.escape(str(value)))
+            break
+
+    for label, field in extra_fields or []:
+        value = row.get(field)
+        if pd.notna(value) and str(value).strip():
+            parts.append(f"{html.escape(label)}: {html.escape(str(value))}")
+
+    return "<br>".join(parts)
 
 
-# ------------------------------------------------------------
-# Create one separate map per metric
-# ------------------------------------------------------------
-for metric in metrics_to_map:
-    meta = metric_specs[metric]
-
-    display(
-        HTML(
-            f"""
-            <div class="health-map-title">
-                {meta["label"]}
-            </div>
-            """
+def add_provider_layers(map_object, include_fqhc=True, include_mental=False):
+    if include_fqhc and not fqhc.empty:
+        layer = folium.FeatureGroup(
+            name=f"FQHC sites (n={len(fqhc)})",
+            show=True,
         )
+        for _, row in fqhc.iterrows():
+            provider_name = (
+                row.get("provider_name")
+                or row.get("site_name")
+                or row.get("facility_name")
+                or "FQHC site"
+            )
+            folium.CircleMarker(
+                [float(row["latitude"]), float(row["longitude"])],
+                radius=5,
+                color="#222222",
+                weight=1,
+                fill=True,
+                fill_color="#ffffff",
+                fill_opacity=0.95,
+                tooltip=str(provider_name),
+                popup=_popup_text(
+                    row,
+                    ["provider_name", "site_name", "facility_name"],
+                    ["full_address", "street_address"],
+                ),
+            ).add_to(layer)
+        layer.add_to(map_object)
+
+    if include_mental and not mental_health.empty:
+        layer = folium.FeatureGroup(
+            name=f"Mental-health provider sites (n={len(mental_health)})",
+            show=True,
+        )
+        for _, row in mental_health.iterrows():
+            site_name = row.get("site_name") or row.get("facility_name") or "Mental-health provider site"
+            folium.CircleMarker(
+                [float(row["latitude"]), float(row["longitude"])],
+                radius=6,
+                color="#4a1486",
+                weight=1,
+                fill=True,
+                fill_color="#ce93d8",
+                fill_opacity=0.95,
+                tooltip=str(site_name),
+                popup=_popup_text(
+                    row,
+                    ["site_name", "facility_name"],
+                    ["full_address"],
+                    [
+                        ("Programs", "mental_health_program_count"),
+                        ("Program names", "program_names"),
+                    ],
+                ),
+            ).add_to(layer)
+        layer.add_to(map_object)
+```
+
+## Map helpers
+
+```{python}
+def add_health_bubbles(
+    map_object,
+    points,
+    metric,
+    lat_col="tract_centroid_latitude",
+    lon_col="tract_centroid_longitude",
+    label_col="tract_label",
+    color="#1a1a1a",
+):
+    values = pd.to_numeric(points[metric], errors="coerce")
+    valid = points.loc[
+        values.notna()
+        & pd.to_numeric(points[lat_col], errors="coerce").notna()
+        & pd.to_numeric(points[lon_col], errors="coerce").notna()
+    ].copy()
+
+    if valid.empty:
+        return map_object
+
+    valid[metric] = pd.to_numeric(valid[metric], errors="coerce")
+    max_value = valid[metric].max()
+
+    metric_label = METRIC_SPECS[metric].get("label", metric)
+    unit = METRIC_SPECS[metric].get("unit", "")
+
+    bubble_layer = folium.FeatureGroup(
+        name=f"{metric_label} bubbles",
+        show=True,
     )
 
-    spec = {
-        "dimension": meta["short_label"],
-        "label": meta["label"],
-        "unit": meta["unit"],
-        "palette": meta["palette"],
-    }
+    for _, row in valid.iterrows():
+        value = row[metric]
+        radius = 6 + 22 * ((value / max_value) ** 0.5) if max_value and max_value > 0 else 8
 
-    for optional_key in ["positive_values_only", "zero_color", "zero_label"]:
-        if optional_key in meta:
-            spec[optional_key] = meta[optional_key]
+        if unit == "%":
+            value_display = f"{value:.1f}%"
+        elif "rate" in metric or "per" in unit:
+            value_display = f"{value:.1f} {unit}"
+        else:
+            value_display = f"{value:.1f} {unit}".strip()
 
-    m = make_base_map(tracts)
+        place_label = row.get(label_col) or row.get("GEOID") or row.get("nta_name") or "Area"
 
-    add_metric_layer(
-        m,
+        folium.CircleMarker(
+            location=[float(row[lat_col]), float(row[lon_col])],
+            radius=radius,
+            color="#777777",
+            weight=1,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.75,
+            tooltip=f"{place_label}: {value_display}",
+            popup=f"<strong>{place_label}</strong><br>{metric_label}: {value_display}",
+        ).add_to(bubble_layer)
+
+    bubble_layer.add_to(map_object)
+    return map_object
+
+
+def add_health_bubbles(
+    map_object,
+    points,
+    metric,
+    lat_col="tract_centroid_latitude",
+    lon_col="tract_centroid_longitude",
+    label_col="tract_label",
+    color="#1a1a1a",
+):
+    values = pd.to_numeric(points[metric], errors="coerce")
+    valid = points.loc[
+        values.notna()
+        & pd.to_numeric(points[lat_col], errors="coerce").notna()
+        & pd.to_numeric(points[lon_col], errors="coerce").notna()
+    ].copy()
+
+    if valid.empty:
+        return map_object
+
+    valid[metric] = pd.to_numeric(valid[metric], errors="coerce")
+    max_value = valid[metric].max()
+
+    metric_label = METRIC_SPECS[metric].get("label", metric)
+    unit = METRIC_SPECS[metric].get("unit", "")
+
+    bubble_layer = folium.FeatureGroup(
+        name=f"{metric_label} bubbles",
+        show=True,
+    )
+
+    for _, row in valid.iterrows():
+        value = row[metric]
+        radius = 6 + 22 * ((value / max_value) ** 0.5) if max_value and max_value > 0 else 8
+
+        if unit == "%":
+            value_display = f"{value:.1f}%"
+        elif "rate" in metric or "per" in unit:
+            value_display = f"{value:.1f} {unit}"
+        else:
+            value_display = f"{value:.1f} {unit}".strip()
+
+        place_label = row.get(label_col) or row.get("GEOID") or row.get("nta_name") or "Area"
+
+        folium.CircleMarker(
+            location=[float(row[lat_col]), float(row[lon_col])],
+            radius=radius,
+            color="#777777",
+            weight=1,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.75,
+            tooltip=f"{place_label}: {value_display}",
+            popup=f"<strong>{place_label}</strong><br>{metric_label}: {value_display}",
+        ).add_to(bubble_layer)
+
+    bubble_layer.add_to(map_object)
+    return map_object
+
+
+def save_health_bubble_map(metric, title, subtitle=None, providers="fqhc"):
+    output_path = MAP_OUTPUT_DIR / METRIC_SPECS[metric]["filename"]
+
+    map_object = make_base_map(tracts)
+
+    add_demographic_backdrop_layers(
+        map_object,
+        tracts,
+        DEMOGRAPHIC_SPECS,
+        none_option_label="No demographic background",
+    )
+
+    add_health_bubbles(
+        map_object,
         tracts,
         metric,
-        spec,
-        show=True,
-        overlay=False,
+        lat_col="tract_centroid_latitude",
+        lon_col="tract_centroid_longitude",
+        label_col="tract_label",
+        color="#1a1a1a",
     )
 
-    display(m)
+    add_provider_layers(
+        map_object,
+        include_fqhc=providers in {"fqhc", "both"},
+        include_mental=providers in {"mental", "both"},
+    )
+
+    add_map_title(
+        map_object,
+        title,
+        subtitle or "Bubbles show Health metric values; tract colors show selectable demographic context.",
+    )
+
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(output_path)
+    print(f"Saved {output_path}")
+    return map_object
+
+def save_asthma_map():
+    output_path = MAP_OUTPUT_DIR / METRIC_SPECS[NTA_METRIC]["filename"]
+
+    map_object = make_base_map(tracts)
+
+    add_demographic_backdrop_layers(
+        map_object,
+        tracts,
+        DEMOGRAPHIC_SPECS,
+        none_option_label="No demographic background",
+    )
+
+    add_health_bubbles(
+        map_object,
+        asthma_points,
+        NTA_METRIC,
+        lat_col="nta_centroid_latitude",
+        lon_col="nta_centroid_longitude",
+        label_col="nta_name",
+        color="#1a1a1a",
+    )
+
+    add_provider_layers(map_object, include_fqhc=True, include_mental=True)
+
+    add_map_title(
+        map_object,
+        "CB3 Health: Pediatric asthma ED visits",
+        "Bubbles show NTA-level pediatric asthma ED visit rates; tract colors show selectable demographic context.",
+    )
+
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(output_path)
+    print(f"Saved {output_path}")
+    return map_object
+
+def save_provider_access_map():
+    output_path = MAP_OUTPUT_DIR / "provider_access.html"
+    map_object = make_base_map(tracts)
+
+    add_demographic_backdrop_layers(
+        map_object,
+        tracts,
+        DEMOGRAPHIC_SPECS,
+        none_option_label="No demographic background",
+    )
+    add_provider_layers(map_object, include_fqhc=True, include_mental=True)
+    add_map_title(
+        map_object,
+        "CB3 Health: provider access",
+        "FQHC and mental-health provider locations over selectable demographic backdrop layers.",
+    )
+    add_zero_value_legend(map_object, "#ffffff", "FQHC site")
+    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
+    map_object.save(output_path)
+    print(f"Saved {output_path}")
+    return map_object
+```
+
+## Maps
+
+### Fair or poor general health
+
+```{python}
+fair_or_poor_map = save_health_bubble_map(
+    "fair_or_poor_general_health_pct",
+    "CB3 Health: Fair or poor general health",
+    subtitle="Bubbles show CDC PLACES tract estimates; tract colors show selectable demographic context.",
+    providers="fqhc",
+)
+fair_or_poor_map
+```
+
+### Diagnosed diabetes
+
+```{python}
+diabetes_map = save_health_bubble_map(
+    "diagnosed_diabetes_pct",
+    "CB3 Health: Diagnosed diabetes",
+    subtitle="Bubbles show CDC PLACES tract estimates; tract colors show selectable demographic context.",
+    providers="fqhc",
+)
+diabetes_map
+```
+
+### Uninsured adults
+
+```{python}
+uninsured_map = save_health_bubble_map(
+    "uninsured_adults_pct",
+    "CB3 Health: Uninsured adults",
+    subtitle="Bubbles show CDC PLACES tract estimates; tract colors show selectable demographic context.",
+    providers="fqhc",
+)
+uninsured_map
+```
+
+### Pediatric asthma and provider locations
+
+```{python}
+asthma_map = save_asthma_map()
+asthma_map
+```
+
+### Provider access
+
+```{python}
+provider_map = save_provider_access_map()
+provider_map
+```
+
+## Life expectancy KPI
+
+```{python}
+if not life.empty:
+    row = life.iloc[0]
+    value = pd.to_numeric(row.get("value"), errors="coerce")
+    period = row.get("time_period", "")
+    source = row.get("source", "")
+    community = row.get("community_name", "Manhattan Community District 3")
+
+    if pd.notna(value):
+        display(
+            {
+                "Community district": community,
+                "Life expectancy at birth": f"{value:.1f} years",
+                "Time period": period,
+                "Source": source,
+            }
+        )
+else:
+    print(
+        "Life expectancy is not available. The current metric is district-level "
+        "and should remain a KPI until a tract-level source is confirmed."
+    )
+```
+
+## Output validation
+
+```{python}
+expected_map_files = [
+    MAP_OUTPUT_DIR / METRIC_SPECS[metric]["filename"]
+    for metric in HEALTH_METRICS
+] + [
+    MAP_OUTPUT_DIR / "provider_access.html",
+]
+
+for map_file in expected_map_files:
+    assert map_file.exists(), map_file
+    assert map_file.stat().st_size > 10_000, map_file
+
+print(f"Wrote {len(expected_map_files)} map files to {MAP_OUTPUT_DIR}")
 ```
