@@ -13,7 +13,7 @@ jupyter: cb3
 
 ## Purpose
 
-This notebook reads the clean Housing & Affordability tract table and maps six
+This notebook reads the clean Housing & Affordability tract table and maps seven
 representative dimensions:
 
 1. Severe rent burden: `severe_rent_burden_pct`
@@ -21,14 +21,20 @@ representative dimensions:
 3. Subsidized properties at risk (2025–2030): `subsidized_units_expiring_2025_2030`
 4. Subsidized properties at risk (2031–2040): `subsidized_units_expiring_2031_2040`
 5. New affordable housing: `new_affordable_units_since_2018`
-6. Housing quality: `hpd_open_class_bc`
+6. New affordable housing by target AMI band: `new_affordable_extremely_low_income_units`
+   and four other AMI-tier unit counts
+7. Housing quality: `hpd_open_class_b`, `hpd_open_class_c`
 
-Each metric is presented on its own map, as a bubble layer sized by magnitude
-over selectable demographic choropleth base layers. Severe rent burden,
-crowded housing, and housing quality are only ever reported at the tract
-level, so their bubbles sit at each tract's centroid. Subsidized properties at
-risk and new affordable housing are building-level data, so their bubbles use
-each building's own coordinates instead of a tract centroid. Map HTML files
+Most metrics are presented on their own map, as a bubble layer sized by
+magnitude over selectable demographic choropleth base layers. Severe rent
+burden and crowded housing are only ever reported at the tract level, so
+their bubbles sit at each tract's centroid. Subsidized properties at risk and
+new affordable housing are building-level data, so their bubbles use each
+building's own coordinates instead of a tract centroid. New affordable
+housing by AMI band and housing quality instead use one donut marker per
+point (sized by total, wedges by category share), since their categories
+commonly co-occur at the same point and would otherwise need several
+same-coordinate bubble layers that stack and hide each other. Map HTML files
 are written to `maps/housing_and_affordability/`.
 
 The notebook also reads the clean CB3 tract baseline profile and creates one
@@ -304,46 +310,70 @@ new_affordable_housing_map = create_single_metric_map(
 new_affordable_housing_map
 ```
 
+### New affordable housing by target AMI band
+
+```{python}
+# A building's units commonly span more than one AMI band, so five separate
+# same-coordinate bubble layers would stack and hide each other. Instead,
+# combine_as_pie=True draws one donut marker per building, sized by its total
+# income-restricted units and split into wedges by AMI band. AMI bands are an
+# ordered tier, not unrelated categories, so wedges use a single-hue
+# black-to-light-grey ordinal ramp (validated: monotone lightness, visible
+# step gaps, light end clears contrast) rather than distinct hues. Order
+# controls wedge color, so the deepest-affordability band (0-30% AMI) is
+# listed first for the darkest, most prominent shade.
+AMI_BAND_COLORS = ["#1a1a1a", "#404040", "#616161", "#828282", "#a3a3a3"]
+new_affordable_housing_by_ami_output_path = MAP_OUTPUT_DIR / "new_affordable_housing_by_ami.html"
+new_affordable_housing_by_ami_map = create_grouped_metric_map(
+    [
+        "new_affordable_extremely_low_income_units",
+        "new_affordable_very_low_income_units",
+        "new_affordable_low_income_units",
+        "new_affordable_moderate_income_units",
+        "new_affordable_middle_income_units",
+    ],
+    new_affordable_housing_by_ami_output_path.name,
+    "CB3 Housing & Affordability: New affordable housing by target AMI band",
+    "Choropleth: use the layer control to pick a demographic fill. Donut "
+    "markers: size shows total new-construction (since 2018) income-restricted "
+    "units at each building; wedges show its mix of target AMI bands.",
+    points=new_construction_points,
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["standard_address", "tract_label"],
+    tooltip_aliases=["Address", "Census tract"],
+    combine_as_pie=True,
+    pie_name="New affordable housing by target AMI band",
+    pie_legend_title="New construction by AMI band",
+    pie_colors=AMI_BAND_COLORS,
+)
+new_affordable_housing_by_ami_map
+```
+
 ### Housing quality
 
 ```{python}
-housing_quality_map = create_single_metric_map(
-    "hpd_open_class_bc"
+# One donut marker per tract centroid, sized by total open HPD Class B/C
+# violations, split into wedges by severity share (Class B hazardous, Class C
+# immediately hazardous) rather than three separate maps (total, Class B
+# only, Class C only). Wedge colors are two grayscale shades rather than
+# distinct hues, with Class C (the more severe, immediately hazardous class)
+# given the darker, more prominent shade.
+HOUSING_QUALITY_COLORS = ["#cccccc", "#1a1a1a"]
+housing_quality_output_path = MAP_OUTPUT_DIR / "housing_quality.html"
+housing_quality_map = create_grouped_metric_map(
+    ["hpd_open_class_b", "hpd_open_class_c"],
+    housing_quality_output_path.name,
+    "CB3 Housing & Affordability: Housing quality",
+    "Choropleth: use the layer control to pick a demographic fill. Donut "
+    "markers: size shows total open HPD violations at each tract; wedges "
+    "show its mix of Class B (hazardous) and Class C (immediately hazardous).",
+    combine_as_pie=True,
+    pie_name="Housing quality (open HPD violations)",
+    pie_legend_title="Violation class",
+    pie_colors=HOUSING_QUALITY_COLORS,
 )
 housing_quality_map
-```
-
-### Housing quality (Class B)
-
-```{python}
-housing_quality_class_b_map = create_single_metric_map(
-    "hpd_open_class_b"
-)
-housing_quality_class_b_map
-```
-
-### Housing quality (Class C)
-
-```{python}
-housing_quality_class_c_map = create_single_metric_map(
-    "hpd_open_class_c"
-)
-housing_quality_class_c_map
-```
-
-### Housing quality (Class B vs Class C)
-
-```{python}
-housing_quality_class_output_path = MAP_OUTPUT_DIR / "housing_quality_class_b_vs_c.html"
-housing_quality_class_map = create_grouped_metric_map(
-    ["hpd_open_class_b", "hpd_open_class_c"],
-    housing_quality_class_output_path.name,
-    "CB3 Housing & Affordability: Housing quality by violation class",
-    "Choropleth: use the layer control to pick a demographic fill. Bubbles: "
-    "size shows open HPD violations at each tract, split into two selectable "
-    "layers by severity (Class B hazardous, Class C immediately hazardous).",
-)
-housing_quality_class_map
 ```
 
 ## Demographic context map
@@ -406,7 +436,6 @@ expected_map_files = [
 ] + [
     demographics_output_path,
     demographic_bubble_output_path,
-    housing_quality_class_output_path,
 ]
 
 for map_file in expected_map_files:
