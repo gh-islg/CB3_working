@@ -1,5 +1,5 @@
 ---
-title: "CB3 Equity Report — Language Access Map"
+title: "CB3 Equity Report — Language Access Maps"
 format:
   html:
     toc: true
@@ -21,15 +21,14 @@ import pandas as pd
 import yaml
 from shapely import wkt
 
-PROJECT_DIR = Path.cwd()
-while not (PROJECT_DIR / "src").exists() and PROJECT_DIR != PROJECT_DIR.parent:
-    PROJECT_DIR = PROJECT_DIR.parent
-
-if str(PROJECT_DIR) not in sys.path:
-    sys.path.insert(0, str(PROJECT_DIR))
+PROJECT_DIR_CANDIDATE = Path.cwd()
+for candidate in [PROJECT_DIR_CANDIDATE, *PROJECT_DIR_CANDIDATE.parents]:
+    if (candidate / "src").exists() and (candidate / "data").exists():
+        sys.path.insert(0, str(candidate))
+        break
 
 from src.map_utils import (
-    build_grouped_bubble_map,
+    build_metric_bubble_map,
     find_project_dir,
     format_metric_value,
 )
@@ -40,82 +39,83 @@ METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
 OUTPUT_DIR = PROJECT_DIR / "maps" / "language"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-OUTPUT_PATH = OUTPUT_DIR / "language_access_lep_households_by_group.html"
+LANGUAGE_METRICS = {
+    "spanish_limited_english_household_share": {
+        "title": "CB3 Language Access: Spanish LEP households",
+    },
+    "other_indo_european_limited_english_household_share": {
+        "title": "CB3 Language Access: Other Indo-European LEP households",
+    },
+    "asian_pacific_limited_english_household_share": {
+        "title": "CB3 Language Access: Asian/Pacific Island LEP households",
+    },
+    "other_languages_limited_english_household_share": {
+        "title": "CB3 Language Access: Other-language LEP households",
+    },
+}
+
+TOTAL_LANGUAGE_CONTEXT_METRICS = {
+    "lep_household_share": ("Total LEP household share", "%"),
+    "lep_households": ("Total LEP households", ""),
+    "households_language_universe": ("Household language universe", ""),
+}
 
 EXCLUDED_DEMOGRAPHIC_METRICS = {"senior_poverty_rate"}
-
-# These are the C16002 household language groups prepared by scripts/language/build.py.
-# They become separate bubble layers on one shared map.
-LANGUAGE_GROUP_METRICS = [
-    "spanish_limited_english_household_share",
-    "other_indo_european_limited_english_household_share",
-    "asian_pacific_limited_english_household_share",
-    "other_languages_limited_english_household_share",
-]
-
-# Total LEP household share stays available as tooltip context.
-TOTAL_LANGUAGE_CONTEXT_METRICS = [
-    "lep_household_share",
-    "lep_households",
-    "households_language_universe",
-]
 ```
 
+## Load metadata
+
 ```{python}
-def to_map_spec(metric, meta, include_filename=False):
-    """Convert metric_metadata.yml entries into the spec expected by map_utils."""
-    spec = {
-        "dimension": meta.get("short_label", metric.replace("_", " ").title()),
+with open(METADATA_PATH, encoding="utf-8") as f:
+    metadata = yaml.safe_load(f) or {}
+
+missing_language_metadata = [
+    metric for metric in LANGUAGE_METRICS
+    if metric not in metadata or not isinstance(metadata[metric], dict)
+]
+if missing_language_metadata:
+    raise KeyError(
+        "Missing language metric metadata in docs/metric_metadata.yml: "
+        + ", ".join(missing_language_metadata)
+    )
+
+language_specs = {}
+for metric in LANGUAGE_METRICS:
+    meta = metadata[metric].copy()
+    language_specs[metric] = {
+        **meta,
+        "dimension": meta.get("dimension", meta.get("short_label", metric.replace("_", " ").title())),
+        "label": meta.get("label", meta.get("short_label", metric.replace("_", " ").title())),
+        "unit": meta.get("unit", "%"),
+        "filename": meta.get("filename", f"{metric}.html"),
+    }
+
+demographic_keys = [
+    metric
+    for metric, meta in metadata.items()
+    if isinstance(meta, dict)
+    and meta.get("domain") == "demographics"
+    and metric not in EXCLUDED_DEMOGRAPHIC_METRICS
+]
+
+demographic_specs = {}
+for metric in demographic_keys:
+    meta = metadata[metric].copy()
+    if "palette" not in meta:
+        continue
+    demographic_specs[metric] = {
+        **meta,
+        "dimension": meta.get("dimension", meta.get("short_label", metric.replace("_", " ").title())),
         "label": meta.get("label", meta.get("short_label", metric.replace("_", " ").title())),
         "unit": meta.get("unit", ""),
     }
 
-    if "palette" in meta:
-        spec["palette"] = meta["palette"]
-
-    if include_filename:
-        spec["filename"] = meta.get("filename", f"{metric}.html")
-
-    for optional_key in ("positive_values_only", "zero_color", "zero_label"):
-        if optional_key in meta:
-            spec[optional_key] = meta[optional_key]
-
-    return spec
-
-
-with open(METADATA_PATH, encoding="utf-8") as f:
-    all_metrics = yaml.safe_load(f) or {}
-
-# Build specs for the specific language group metrics only.
-language_group_specs = {}
-for metric in LANGUAGE_GROUP_METRICS:
-    meta = all_metrics.get(metric)
-    if isinstance(meta, dict):
-        language_group_specs[metric] = to_map_spec(metric, meta, include_filename=True)
-    else:
-        # Fallback so the map can still run if a context metric is present in
-        # language.csv but not yet documented in metadata.
-        language_group_specs[metric] = {
-            "dimension": metric.replace("_", " ").replace("Limited English Household Share", "LEP household share").title(),
-            "label": metric.replace("_", " ").title(),
-            "unit": "%",
-            "filename": OUTPUT_PATH.name,
-        }
-
-demographic_specs = {
-    metric: to_map_spec(metric, meta)
-    for metric, meta in all_metrics.items()
-    if isinstance(meta, dict)
-    and meta.get("domain") == "demographics"
-    and metric not in EXCLUDED_DEMOGRAPHIC_METRICS
-}
-
 if not demographic_specs:
-    raise ValueError("No demographic metrics found in metric_metadata.yml.")
+    raise ValueError("No demographic backdrop metrics found in docs/metric_metadata.yml.")
 
-print("Language group bubble metrics:")
-for metric in language_group_specs:
-    print(f"  {metric}")
+print("Language maps to render:")
+for metric, spec in language_specs.items():
+    print(f"  {metric} -> {spec['filename']}")
 
 print("\nDemographic backdrop metrics:")
 for metric in demographic_specs:
@@ -145,7 +145,7 @@ if missing_required:
     raise ValueError(
         "language.csv is not map-ready. Missing columns: "
         + ", ".join(missing_required)
-        + ". Re-run the refactored scripts/language/build.py."
+        + ". Re-run scripts/language/build.py."
     )
 
 clean["GEOID"] = clean["GEOID"].astype(str).str.extract(r"(\d+)")[0].str.zfill(11)
@@ -157,14 +157,14 @@ tracts = gpd.GeoDataFrame(
     crs="EPSG:4326",
 )
 
-numeric_columns = set(LANGUAGE_GROUP_METRICS) | set(TOTAL_LANGUAGE_CONTEXT_METRICS) | set(demographic_specs)
+numeric_columns = set(LANGUAGE_METRICS) | set(TOTAL_LANGUAGE_CONTEXT_METRICS) | set(demographic_specs)
 for column in numeric_columns:
     if column in tracts.columns:
         tracts[column] = pd.to_numeric(tracts[column], errors="coerce")
 
-available_language_group_specs = {
+available_language_specs = {
     metric: spec
-    for metric, spec in language_group_specs.items()
+    for metric, spec in language_specs.items()
     if metric in tracts.columns and tracts[metric].notna().any()
 }
 
@@ -177,20 +177,20 @@ available_demographic_specs = {
 assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
 assert tracts["GEOID"].is_unique
 
-if not available_language_group_specs:
+if not available_language_specs:
     raise ValueError(
-        "No LEP household language-group metrics are available in data/clean/language.csv."
+        "No language-group LEP household metrics are available in data/clean/language.csv."
     )
 
 if not available_demographic_specs:
     raise ValueError(
         "No demographic backdrop columns are available in data/clean/language.csv. "
-        "Make sure build.py merged a baseline file or that language.csv already contains demographics."
+        "Make sure scripts/language/build.py merged a baseline file or that language.csv already contains demographics."
     )
 
-print("Available language group bubble layers:")
-for metric, spec in available_language_group_specs.items():
-    print(f"  {metric}: {tracts[metric].notna().sum()} tracts")
+print("Available language maps:")
+for metric, spec in available_language_specs.items():
+    print(f"  {metric}: {tracts[metric].notna().sum()} tracts -> {spec['filename']}")
 
 print("\nAvailable demographic backdrops:")
 for metric in available_demographic_specs:
@@ -200,55 +200,57 @@ for metric in available_demographic_specs:
 ## Add total LEP household context to tooltip
 
 ```{python}
-def add_display_column(source_column, label, unit):
-    display_column = f"{source_column}_display"
-    tracts[display_column] = tracts[source_column].map(
-        lambda value: format_metric_value(value, unit)
-    )
-    return display_column
-
-
 tooltip_fields = ["tract_label", "nta_name"]
 tooltip_aliases = ["Census tract", "NTA"]
 
-context_specs = {
-    "lep_household_share": ("Total LEP household share", "%"),
-    "lep_households": ("Total LEP households", ""),
-    "households_language_universe": ("Household language universe", ""),
-}
-
-for source_column, (label, unit) in context_specs.items():
+for source_column, (label, unit) in TOTAL_LANGUAGE_CONTEXT_METRICS.items():
     if source_column in tracts.columns and tracts[source_column].notna().any():
-        tooltip_fields.append(add_display_column(source_column, label, unit))
+        display_column = f"{source_column}_display"
+        tracts[display_column] = tracts[source_column].map(
+            lambda value, unit=unit: format_metric_value(value, unit)
+        )
+        tooltip_fields.append(display_column)
         tooltip_aliases.append(label)
 ```
 
-## Render grouped Language Access map
+## Render separate Language Access maps
 
 ```{python}
-language_map = build_grouped_bubble_map(
-    tracts=tracts,
-    metric_specs=available_language_group_specs,
-    demographic_specs=available_demographic_specs,
-    metrics=list(available_language_group_specs),
-    title="CB3 Language Access: LEP households by language group",
-    subtitle=(
-        "Choropleth: use the layer control to pick a demographic fill. "
-        "Bubbles: selectable C16002 limited-English household language groups. "
-        "Tooltip includes total LEP household context where available."
-    ),
-    output_path=OUTPUT_PATH,
-    tooltip_fields=tooltip_fields,
-    tooltip_aliases=tooltip_aliases,
-)
+rendered = {}
 
-print(f"Saved grouped Language Access map: {OUTPUT_PATH.relative_to(PROJECT_DIR)}")
+for metric, spec in available_language_specs.items():
+    output_path = OUTPUT_DIR / spec["filename"]
+    settings = LANGUAGE_METRICS[metric]
+
+    map_object = build_metric_bubble_map(
+        tracts=tracts,
+        metric_specs={metric: spec},
+        demographic_specs=available_demographic_specs,
+        metric=metric,
+        title=settings["title"],
+        subtitle=(
+            f"Bubbles: {spec['label']}. "
+            "Background: selectable demographic layer. "
+            "Tooltip includes total LEP household context where available."
+        ),
+        output_path=output_path,
+        tooltip_fields=tooltip_fields,
+        tooltip_aliases=tooltip_aliases,
+    )
+
+    rendered[metric] = {
+        "map": map_object,
+        "output_path": output_path,
+    }
+    print(f"Saved: {output_path.relative_to(PROJECT_DIR)}")
 ```
 
-## Preview map
+## Preview first rendered map
 
 ```{python}
-language_map
+first_metric = next(iter(rendered))
+print(f"First rendered map: {first_metric}")
+print(f"Open: {rendered[first_metric]['output_path'].relative_to(PROJECT_DIR)}")
 ```
 
 ## Validation summary
@@ -258,19 +260,42 @@ summary = pd.DataFrame(
     [
         {
             "metric": metric,
-            "label": available_language_group_specs[metric]["label"],
+            "label": available_language_specs[metric]["label"],
             "tracts_with_data": int(tracts[metric].notna().sum()),
-            "output_html": OUTPUT_PATH.name,
+            "output_html": details["output_path"].name,
+            "output_exists": details["output_path"].exists(),
+            "output_size_bytes": (
+                details["output_path"].stat().st_size
+                if details["output_path"].exists()
+                else 0
+            ),
         }
-        for metric in available_language_group_specs
+        for metric, details in rendered.items()
     ]
 )
 
 display(summary)
 
-assert OUTPUT_PATH.exists(), OUTPUT_PATH
-assert OUTPUT_PATH.stat().st_size > 10_000, OUTPUT_PATH
+expected_outputs = {
+    language_specs[metric]["filename"]
+    for metric in LANGUAGE_METRICS
+    if metric in available_language_specs
+}
+actual_outputs = {
+    details["output_path"].name
+    for details in rendered.values()
+}
 
-print("Output file:")
-print(f"  {OUTPUT_PATH.relative_to(PROJECT_DIR)}")
+missing_outputs = expected_outputs - actual_outputs
+if missing_outputs:
+    raise AssertionError(f"Missing expected Language map outputs: {sorted(missing_outputs)}")
+
+for details in rendered.values():
+    path = details["output_path"]
+    assert path.exists(), path
+    assert path.stat().st_size > 10_000, path
+
+print("Output files:")
+for details in rendered.values():
+    print(f"  {details['output_path'].relative_to(PROJECT_DIR)}")
 ```

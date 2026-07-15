@@ -640,16 +640,14 @@ food_supply_gap_score:
 lep_household_share:
   domain: language-context
   short_label: LEP household share
+  dimension: LEP household share
   label: Limited-English-proficient households
-  description: >
-    Percentage of households in which no person age 14 or older speaks
-    English only or speaks English very well. Calculated as the sum of
-    limited-English-speaking household groups divided by the household
-    language universe, multiplied by 100.
+  description: Share of households with limited English proficiency.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates, table C16002
+  source: ACS 2020-2024 C16002
+  year: 2024
   geography: Census tract
-  higher_is: worse
+  higher_is: context
   map_classification: tooltip
   display_format: percent
   filename: context_only.html
@@ -657,48 +655,60 @@ lep_household_share:
 spanish_limited_english_household_share:
   domain: language
   short_label: Spanish LEP households
-  label: Share of households that speak Spanish and have limited English-speaking status
+  dimension: Spanish LEP households
+  label: Spanish limited-English-proficient households
+  description: Share of households that speak Spanish and have limited English proficiency.
   unit: "%"
-  source: 2020-2024 ACS C16002
+  source: ACS 2020-2024 C16002
+  year: 2024
   geography: Census tract
-  higher_is: worse
+  higher_is: context
   map_classification: bubble
   display_format: percent
-  filename: language_access_lep_households_by_group.html
+  filename: language_access_spanish_lep_households.html
 
 other_indo_european_limited_english_household_share:
   domain: language
   short_label: Other Indo-European LEP households
-  label: Share of households that speak other Indo-European languages and have limited English-speaking status
+  dimension: Other Indo-European LEP households
+  label: Other Indo-European limited-English-proficient households
+  description: Share of households that speak other Indo-European languages and have limited English proficiency.
   unit: "%"
-  source: 2020-2024 ACS C16002
+  source: ACS 2020-2024 C16002
+  year: 2024
   geography: Census tract
-  higher_is: worse
+  higher_is: context
   map_classification: bubble
   display_format: percent
-  filename: language_access_lep_households_by_group.html
+  filename: language_access_other_indo_european_lep_households.html
 
 asian_pacific_limited_english_household_share:
   domain: language
   short_label: Asian/Pacific Island LEP households
-  label: Share of households that speak Asian or Pacific Island languages and have limited English-speaking status
+  dimension: Asian/Pacific Island LEP households
+  label: Asian/Pacific Island limited-English-proficient households
+  description: Share of households that speak Asian/Pacific Island languages and have limited English proficiency.
   unit: "%"
-  source: 2020-2024 ACS C16002
+  source: ACS 2020-2024 C16002
+  year: 2024
   geography: Census tract
-  higher_is: worse
+  higher_is: context
   map_classification: bubble
   display_format: percent
-  filename: language_access_lep_households_by_group.html
+  filename: language_access_asian_pacific_lep_households.html
 
 other_languages_limited_english_household_share:
   domain: language
   short_label: Other-language LEP households
-  label: Share of households that speak other languages and have limited English-speaking status
+  dimension: Other-language LEP households
+  label: Other-language limited-English-proficient households
+  description: Share of households that speak other languages and have limited English proficiency.
   unit: "%"
-  source: 2020-2024 ACS C16002
+  source: ACS 2020-2024 C16002
+  year: 2024
   geography: Census tract
-  higher_is: worse
+  higher_is: context
   map_classification: bubble
   display_format: percent
-  filename: language_access_lep_households_by_group.html
+  filename: language_access_other_languages_lep_households.html
 
