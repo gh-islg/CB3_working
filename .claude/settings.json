@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(./src/cb3_utils.py)",
+      "Write(./src/cb3_utils.py)",
+      "Edit(./src/map_utils.py)",
+      "Write(./src/map_utils.py)"
+    ]
+  }
+}

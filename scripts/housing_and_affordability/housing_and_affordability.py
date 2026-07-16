@@ -56,7 +56,7 @@ print(f"Loaded Housing & Affordability reference rows: {len(domain_1_reference)}
 
 # Extract the Housing & Affordability section from the concept PDF for auditability.
 concept_reader = PdfReader(
-    DOCS_DIR / "proposed_concept_for_CB3_equity_report_v2.pdf"
+    DOCS_DIR / "proposed_concept_for_CB3_equity_report_v3.pdf"
 )
 concept_text = "\n".join(page.extract_text() or "" for page in concept_reader.pages)
 start = concept_text.find("Domain 1 — Housing & Affordability")
@@ -391,54 +391,100 @@ expiration_2041_later_cd = read_cb3_expiration_context(
     "communitydistrict-eligibletoexpirefromhousingprogramsin2041andlaterunits.csv"
 )
 
-# Use the subsidy-level file for recent new-construction records. The local file
-# identifies subsidy/program type, not AMI band, so no AMI value is inferred.
-furman_subsidy = pd.read_csv(
-    FURMAN_DIR / "FC_SHD_subsidy_analysis_2025-05-13.csv",
-    encoding="cp1252",
+# Use HPD's own "Affordable Housing Production by Building" file for recent
+# new-construction records instead of the Furman subsidy file. Furman only
+# identifies subsidy/program type (e.g. LIHTC, 421-a), not AMI band, so no
+# defensible AMI value could be derived from it. HPD reports each building's
+# units directly by AMI tier (0-30%, 31-50%, 51-80%, 81-120%, 121-165% AMI).
+hpd_production = pd.read_csv(
+    RAW_DIR / "Affordable_Housing_Production_by_Building_20260715.csv",
     low_memory=False,
 )
-furman_subsidy = furman_subsidy[furman_subsidy["cd_id"].eq(103)].copy()
-furman_subsidy["start_year"] = furman_subsidy["start_date"].map(extract_year)
-furman_subsidy = furman_subsidy.merge(
-    furman_bbl[["bbl", "GEOID"]].rename(columns={"bbl": "ref_bbl"}),
-    on="ref_bbl",
-    how="left",
-    validate="many_to_one",
-)
-recent_construction = furman_subsidy[
-    furman_subsidy["preservation"].eq("New Construction")
-    & furman_subsidy["start_year"].ge(2018)
-    & furman_subsidy["GEOID"].isin(CB3_GEOIDS)
-].copy()
+hpd_production = hpd_production[hpd_production["Community Board"].eq("MN-03")].copy()
 
-# A property may have multiple subsidy rows. Count each BBL once and use its
-# maximum reported unit count to avoid double counting units.
-recent_construction = (
-    recent_construction.groupby(["GEOID", "ref_bbl"], as_index=False)
-    .agg(new_affordable_units_since_2018=("tot_units", "max"))
+AMI_BAND_COLUMNS = {
+    "Extremely Low Income Units": "new_affordable_extremely_low_income_units",
+    "Very Low Income Units": "new_affordable_very_low_income_units",
+    "Low Income Units": "new_affordable_low_income_units",
+    "Moderate Income Units": "new_affordable_moderate_income_units",
+    "Middle Income Units": "new_affordable_middle_income_units",
+}
+numeric_columns = ["Total Units", "All Counted Units", *AMI_BAND_COLUMNS]
+hpd_production[numeric_columns] = hpd_production[numeric_columns].apply(
+    pd.to_numeric, errors="coerce"
+)
+hpd_production["start_year"] = pd.to_datetime(
+    hpd_production["Project Start Date"], errors="coerce"
+).dt.year
+hpd_production["GEOID"] = _assign(
+    hpd_production, "Longitude", "Latitude", "Census Tract"
+)
+hpd_production_unallocated_count = int(
+    (~hpd_production["GEOID"].isin(CB3_GEOIDS)).sum()
+)
+
+recent_construction = hpd_production[
+    hpd_production["Reporting Construction Type"].eq("New Construction")
+    & hpd_production["start_year"].ge(2018)
+    & hpd_production["GEOID"].isin(CB3_GEOIDS)
+].copy()
+recent_construction = recent_construction.rename(columns=AMI_BAND_COLUMNS)
+recent_construction[list(AMI_BAND_COLUMNS.values())] = recent_construction[
+    list(AMI_BAND_COLUMNS.values())
+].fillna(0)
+
+# A building can carry multiple project rows (e.g. separate funding rounds at
+# the same address). Sum rather than dedupe, since each project row reports
+# its own distinct units, not a repeated total for the same project.
+# "All Counted Units" (income-restricted units) is used as the affordable
+# unit count, not "Total Units" (which also includes market-rate units in
+# mixed-income buildings) — the AMI tier columns sum exactly to the former.
+recent_construction = recent_construction.groupby(
+    ["GEOID", "Building ID"], as_index=False
+).agg(
+    new_affordable_units_since_2018=("All Counted Units", "sum"),
+    **{
+        column: (column, "sum")
+        for column in AMI_BAND_COLUMNS.values()
+    },
+    latitude=("Latitude", "first"),
+    longitude=("Longitude", "first"),
+    standard_address=("Number", lambda s: s.iloc[0]),
+    street=("Street", "first"),
+)
+recent_construction["standard_address"] = (
+    recent_construction["standard_address"].astype(str)
+    + " "
+    + recent_construction["street"].astype(str)
 )
 recent_construction["new_affordable_properties_since_2018"] = 1
+
+construction_metric_columns = [
+    "new_affordable_properties_since_2018",
+    "new_affordable_units_since_2018",
+    *AMI_BAND_COLUMNS.values(),
+]
 construction_metrics = recent_construction.groupby("GEOID", as_index=False)[
-    ["new_affordable_properties_since_2018", "new_affordable_units_since_2018"]
+    construction_metric_columns
 ].sum()
 
 # Building-level export for point/bubble maps: one row per new-construction
-# property, keeping its own coordinates rather than collapsing to the tract
-# centroid. Coordinates/address come from the BBL-level file via ref_bbl.
+# building, keeping its own coordinates rather than collapsing to the tract
+# centroid.
 NEW_CONSTRUCTION_POINTS_PATH = (
     CLEAN_DIR / "housing_and_affordability_new_construction_points.csv"
 )
-new_construction_points = recent_construction.merge(
-    furman_bbl_mapped[["bbl", "standard_address", "latitude", "longitude"]].rename(
-        columns={"bbl": "ref_bbl"}
-    ),
-    on="ref_bbl",
-    how="left",
-    validate="one_to_one",
-).rename(columns={"ref_bbl": "bbl"})[
-    ["bbl", "standard_address", "GEOID", "latitude", "longitude", "new_affordable_units_since_2018"]
-]
+new_construction_points = recent_construction[
+    [
+        "Building ID",
+        "standard_address",
+        "GEOID",
+        "latitude",
+        "longitude",
+        "new_affordable_units_since_2018",
+        *AMI_BAND_COLUMNS.values(),
+    ]
+].rename(columns={"Building ID": "building_id"})
 new_construction_points.to_csv(NEW_CONSTRUCTION_POINTS_PATH, index=False)
 print(
     f"Wrote {len(new_construction_points)} new-construction building points to {NEW_CONSTRUCTION_POINTS_PATH}"
@@ -598,11 +644,14 @@ log_lines = [
     f"Executed evictions:    {eviction_unallocated_count} residential records not allocated",
     f"Indoor complaints:     {indoor_unallocated_count} CB3-labelled records not allocated",
     f"NYCHA violations:      {nycha_unallocated_count} MN03 NYCHA records not allocated",
+    f"New construction:      {hpd_production_unallocated_count} MN-03 HPD production records not allocated "
+    "(includes rows with a CONFIDENTIAL project name and a masked address/coordinates)",
     "Eviction filings:      Community-district trend only; 2024 value retained as CD context column",
     "",
     "=== Data Availability ===",
     "Supportive housing:    Primary DSS/OSH file unavailable; no tract metric produced",
-    "New construction AMI:  Local Furman file has no defensible AMI-band field",
+    "New construction AMI:  Now sourced from HPD Affordable Housing Production by Building "
+    "(replaces the Furman subsidy file, which only identified program type, not AMI band)",
     "HPD Local Law 44:      Project and unit-income files unavailable",
     "Senior walkup units:   MapPLUTO elevator and BIS inspection files unavailable",
     "CHP 2022:              PUMA/sub-borough survey context only; not allocated to tracts",

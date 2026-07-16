@@ -80,14 +80,16 @@ subsidized_units_expiring_2031_2040:
 new_affordable_units_since_2018:
   domain: housing_and_affordability
   short_label: New affordable housing
-  label: Reported units at new-construction affordable properties since 2018
+  label: Income-restricted units at new-construction affordable properties since 2018
   description: >
-    Number of units at affordable properties with a new-construction subsidy
-    start year of 2018 or later. Tracts with zero new units are shown separately.
+    Number of income-restricted ("counted") units at properties with a
+    new-construction start year of 2018 or later. Excludes market-rate units
+    in the same mixed-income buildings. Tracts with zero new units are shown
+    separately.
   unit: " units"
   palette: ["#fff7fb", "#d4b9da", "#c994c7", "#8856a7", "#4d004b"]
-  source: Furman Center Subsidized Housing Database
-  year: 2025
+  source: HPD Affordable Housing Production by Building
+  year: 2026
   geography: Census tract
   higher_is: better
   map_classification: quintile
@@ -96,6 +98,92 @@ new_affordable_units_since_2018:
   zero_color: "#e6e6e6"
   zero_label: No new affordable units since 2018
   filename: new_affordable_housing.html
+
+new_affordable_extremely_low_income_units:
+  domain: housing_and_affordability
+  short_label: 0-30% AMI
+  label: New-construction units affordable at 0-30% AMI since 2018
+  description: >
+    Number of new-construction (since 2018) income-restricted units
+    affordable to households earning 0-30% of area median income (AMI), the
+    deepest affordability tier HPD reports.
+  unit: " units"
+  palette: ["#fcc5c0", "#fa9fb5", "#dd3497", "#ae017e", "#49006a"]
+  source: HPD Affordable Housing Production by Building
+  year: 2026
+  geography: Census tract
+  higher_is: better
+  map_classification: quintile
+  display_format: count
+  filename: new_affordable_housing_by_ami.html
+
+new_affordable_very_low_income_units:
+  domain: housing_and_affordability
+  short_label: 31-50% AMI
+  label: New-construction units affordable at 31-50% AMI since 2018
+  description: >
+    Number of new-construction (since 2018) income-restricted units
+    affordable to households earning 31-50% of area median income (AMI).
+  unit: " units"
+  palette: ["#fde0dd", "#fcc5c0", "#fa9fb5", "#dd3497", "#ae017e"]
+  source: HPD Affordable Housing Production by Building
+  year: 2026
+  geography: Census tract
+  higher_is: better
+  map_classification: quintile
+  display_format: count
+  filename: new_affordable_housing_by_ami.html
+
+new_affordable_low_income_units:
+  domain: housing_and_affordability
+  short_label: 51-80% AMI
+  label: New-construction units affordable at 51-80% AMI since 2018
+  description: >
+    Number of new-construction (since 2018) income-restricted units
+    affordable to households earning 51-80% of area median income (AMI).
+  unit: " units"
+  palette: ["#eff3ff", "#c6dbef", "#9ecae1", "#6baed6", "#3182bd"]
+  source: HPD Affordable Housing Production by Building
+  year: 2026
+  geography: Census tract
+  higher_is: better
+  map_classification: quintile
+  display_format: count
+  filename: new_affordable_housing_by_ami.html
+
+new_affordable_moderate_income_units:
+  domain: housing_and_affordability
+  short_label: 81-120% AMI
+  label: New-construction units affordable at 81-120% AMI since 2018
+  description: >
+    Number of new-construction (since 2018) income-restricted units
+    affordable to households earning 81-120% of area median income (AMI).
+  unit: " units"
+  palette: ["#edf8e9", "#bae4b3", "#74c476", "#31a354", "#006d2c"]
+  source: HPD Affordable Housing Production by Building
+  year: 2026
+  geography: Census tract
+  higher_is: better
+  map_classification: quintile
+  display_format: count
+  filename: new_affordable_housing_by_ami.html
+
+new_affordable_middle_income_units:
+  domain: housing_and_affordability
+  short_label: 121-165% AMI
+  label: New-construction units affordable at 121-165% AMI since 2018
+  description: >
+    Number of new-construction (since 2018) income-restricted units
+    affordable to households earning 121-165% of area median income (AMI).
+  unit: " units"
+  palette: ["#fff5eb", "#fdd0a2", "#fdae6b", "#fd8d3c", "#d94801"]
+  source: HPD Affordable Housing Production by Building
+  year: 2026
+  geography: Census tract
+  higher_is: better
+  map_classification: quintile
+  display_format: count
+  filename: new_affordable_housing_by_ami.html
 
 hpd_open_class_bc:
   domain: housing_and_affordability
@@ -129,7 +217,7 @@ hpd_open_class_b:
   higher_is: worse
   map_classification: quintile
   display_format: count
-  filename: housing_quality_class_b.html
+  filename: housing_quality.html
 
 hpd_open_class_c:
   domain: housing_and_affordability
@@ -146,7 +234,7 @@ hpd_open_class_c:
   higher_is: worse
   map_classification: quintile
   display_format: count
-  filename: housing_quality_class_c.html
+  filename: housing_quality.html
 
 # --- Environmental Conditions ---
 
@@ -582,56 +670,110 @@ no_routine_checkup_pct:
 
 # --- Economic Security & Food ---
 
-poverty_rate_pct:
-  domain: economic-food
-  short_label: Poverty rate
-  label: Population below poverty level
+safety_net_enrollment_per_capita:
+  domain: economic-security-food
+  short_label: Safety-net enrollment
+  label: Safety-net enrollment per capita
   description: >
-    Percentage of the tract population whose income in the past 12 months
-    was below the poverty level.
+    Community District-level Medicaid, SNAP, and cash assistance enrollment context
+    divided by the tract ACS poverty-universe population. This is contextual and
+    should not be interpreted as tract-assigned enrollment.
+  unit: ""
+  source: NYC District Resource Statement and ACS 5-year estimates
+  year: 2024
+  geography: Census tract with Community District context
+  higher_is: context
+  map_classification: bubble
+  display_format: number
+  filename: safety_net_reliance_by_tract.html
+
+poverty_rate_pct:
+  domain: economic-security-food-context
+  short_label: Poverty rate
+  label: Poverty rate
+  description: >
+    Share of residents whose income in the past 12 months was below the poverty level.
   unit: "%"
-  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
   source: ACS 5-year estimates, table B17020
   year: 2024
   geography: Census tract
   higher_is: worse
-  map_classification: quintile
+  map_classification: tooltip
   display_format: percent
-  filename: poverty_rate_pct.html
+  filename: context_only.html
 
-food_supply_gap_rank:
-  domain: economic-food
+unemployment_rate_pct:
+  domain: economic-security-food
+  short_label: Unemployment rate
+  label: Unemployment rate
+  description: >
+    Share of the civilian labor force that is unemployed.
+  unit: "%"
+  source: ACS 5-year estimates, table B23025
+  year: 2024
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: labor_market_conditions_by_tract.html
+
+median_earnings_all_workers:
+  domain: economic-security-food-context
+  short_label: Median earnings
+  label: Median earnings for all workers
+  description: >
+    Median earnings in the past 12 months for all workers.
+  unit: "$"
+  source: ACS 5-year estimates, table B20002
+  year: 2024
+  geography: Census tract
+  higher_is: better
+  map_classification: tooltip
+  display_format: currency
+  filename: context_only.html
+
+food_insecurity_rate_pct:
+  domain: economic-security-food
+  short_label: Food insecurity
+  label: Food insecurity rate
+  description: >
+    Estimated food insecurity prevalence from CDC PLACES.
+  unit: "%"
+  source: CDC PLACES
+  year: 2025 release
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: food_insecurity_by_tract.html
+
+food_supply_gap_rank_nta:
+  domain: economic-security-food-context
   short_label: Food supply gap rank
-  label: Emergency food supply gap rank
+  label: Food supply gap rank by NTA
   description: >
-    Emergency food supply gap rank joined to CB3 census tracts.
-    This metric is reported at the NTA level and may repeat across
-    multiple tracts within the same NTA.
-  unit: " rank"
-  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
-  source: Emergency Food Supply Gap dataset
+    NTA-level emergency food supply gap rank joined to CB3 tracts by NTA.
+  unit: ""
+  source: NYC emergency food supply gap data
   year: 2026
   geography: NTA joined to census tract
-  higher_is: worse
-  map_classification: quintile
+  higher_is: context
+  map_classification: tooltip
   display_format: number
-  filename: food_supply_gap_rank.html
+  filename: context_only.html
 
-food_supply_gap_score:
-  domain: economic-food
+food_supply_gap_score_nta:
+  domain: economic-security-food-context
   short_label: Food supply gap score
-  label: Emergency food supply gap weighted score
+  label: Food supply gap score by NTA
   description: >
-    Weighted emergency food supply gap score joined to CB3 census tracts.
-    This metric is reported at the NTA level and may repeat across
-    multiple tracts within the same NTA.
-  unit: " score"
-  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
-  source: Emergency Food Supply Gap dataset, Weighted_Score
+    NTA-level weighted emergency food supply gap score joined to CB3 tracts by NTA.
+  unit: ""
+  source: NYC emergency food supply gap data
   year: 2026
   geography: NTA joined to census tract
   higher_is: worse
-  map_classification: quintile
+  map_classification: tooltip
   display_format: number
   filename: food_supply_gap_score.html
 

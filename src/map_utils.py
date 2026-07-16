@@ -586,14 +586,19 @@ def add_categorical_legend(map_object, title, category_colors, bottom_offset=35,
         ``"diamond"`` (default) matches the diamond point markers drawn by
         ``add_categorical_point_layer``. Use ``"square"`` for categorical
         polygon/fill layers (e.g. an evacuation-zone choropleth), where a
-        diamond swatch would misleadingly imply point markers.
+        diamond swatch would misleadingly imply point markers. Use
+        ``"circle"`` for the wedge colors drawn by
+        ``build_grouped_bubble_map(..., combine_as_pie=True)``.
     """
-    swatch_transform = "transform:rotate(45deg);" if shape == "diamond" else ""
+    swatch_style = {
+        "diamond": "transform:rotate(45deg);",
+        "circle": "border-radius:50%;",
+    }.get(shape, "")
     rows_html = "".join(
         f"""
         <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
           <span style="display:inline-block;width:10px;height:10px;background:{color};
-                       border:1px solid #777;{swatch_transform}"></span>
+                       border:1px solid #777;{swatch_style}"></span>
           <span>{label}</span>
         </div>
         """
@@ -620,8 +625,12 @@ def add_categorical_legend(map_object, title, category_colors, bottom_offset=35,
 
 # Fixed color cycle for grouped bubble maps, so each related-metric layer
 # stays a stable, distinguishable color regardless of how many layers are
-# grouped together.
-GROUPED_BUBBLE_COLORS = ["#252525", "#db3232"]
+# grouped together. The first two entries are unchanged from the original
+# two-color cycle (e.g. paired expiration windows, violation classes); three
+# more distinguishable colors are appended for groupings with more layers
+# (e.g. AMI bands), with the metric list order controlling which color a
+# given layer gets — put the most important layer first for a prominent color.
+GROUPED_BUBBLE_COLORS = ["#252525", "#db3232", "#2166ac", "#33a02c", "#ff7f00"]
 
 
 def build_metric_bubble_map(
@@ -725,6 +734,101 @@ def build_metric_bubble_map(
     return map_object
 
 
+def _add_combined_pie_layer(
+    map_object, points, metrics, metric_specs, lat_col, lon_col,
+    tooltip_fields, tooltip_aliases, min_radius, max_radius, name, legend_title, colors,
+):
+    """Draw one donut marker per row for ``build_grouped_bubble_map(...,
+    combine_as_pie=True)``: sized by the summed value across ``metrics`` and
+    split into wedges colored by ``colors``, in the same order as ``metrics``
+    (so the first metric gets the most prominent color and the widest wedge
+    share advantage at ties).
+
+    ``name`` is the single layer-control label for the combined layer (each
+    metric's own ``short_label`` would otherwise have to be concatenated,
+    which reads poorly once there are more than two metrics). ``legend_title``
+    labels the wedge-color legend; band rows use each metric's bare
+    ``short_label`` (e.g. "0-30% AMI") since the shared context (e.g. "new
+    construction") belongs in the title, not repeated on every row.
+    """
+    bands = [
+        (metric, metric_specs[metric]["dimension"], colors[i % len(colors)])
+        for i, metric in enumerate(metrics)
+    ]
+    plot_points = points.copy()
+    plot_points["_pie_total"] = plot_points[metrics].sum(axis=1)
+    plot_points = plot_points[plot_points["_pie_total"] > 0].copy()
+    max_total = plot_points["_pie_total"].max()
+
+    def radius_for(value): # formula same as other bubbles
+        if max_total <= 0:
+            return min_radius
+        return min_radius + (max_radius - min_radius) * (value / max_total) ** 0.5
+
+    fields = tooltip_fields or []
+    aliases = tooltip_aliases or []
+    layer = folium.FeatureGroup(name=name, show=True, control=True)
+    for _, row in plot_points.iterrows():
+        total = row["_pie_total"]
+        radius = radius_for(total) # compute buiding's diameter/radius
+        diameter = radius * 2
+
+        # Conic-gradient stops so each wedge's angular share matches the
+        # metric's share of this row's total.
+        stops = []
+        cumulative_pct = 0.0
+        # for each AMI band/vategory, get fraction of the circle it should occupy
+        for column, _, color in bands:
+            share = row[column] / total
+            if share <= 0:
+                continue
+            start_pct = cumulative_pct
+            # convert to cumulative percentage range
+            cumulative_pct += share * 100
+            stops.append(f"{color} {start_pct:.2f}% {cumulative_pct:.2f}%")
+
+        # tooltips
+        tooltip_lines = [f"{alias}: {row[field]}" for field, alias in zip(fields, aliases)]
+        tooltip_lines.append(f"Total: {int(total)}")
+        for column, label, _ in bands:
+            if row[column] > 0:
+                tooltip_lines.append(f"{label}: {int(row[column])}")
+
+        icon = folium.DivIcon(
+            html=f"""
+            <div style="
+                width: {diameter}px;
+                height: {diameter}px;
+                border-radius: 50%;
+                overflow: hidden;
+                border: 1.5px solid #ffffff;
+                box-shadow: 0 0 1px 1px rgba(0,0,0,0.35);
+                box-sizing: border-box;
+            "><div style="
+                width: 100%;
+                height: 100%;
+                background: conic-gradient({", ".join(stops)});
+            "></div></div>
+            """,
+            icon_size=(diameter, diameter),
+            icon_anchor=(radius, radius),
+        )
+        folium.Marker(
+            location=[row[lat_col], row[lon_col]],
+            icon=icon,
+            tooltip=folium.Tooltip("<br>".join(tooltip_lines)),
+        ).add_to(layer)
+    layer.add_to(map_object)
+
+    add_bubble_size_legend(
+        map_object, "Total", metric_specs[metrics[0]]["unit"], max_total, radius_for, "#555555",
+    )
+    add_categorical_legend(
+        map_object, legend_title, {label: color for _, label, color in bands},
+        bottom_offset=35 + 190, shape="circle",
+    )
+
+
 def build_grouped_bubble_map(
     tracts,
     metric_specs,
@@ -739,6 +843,12 @@ def build_grouped_bubble_map(
     tooltip_fields=None,
     tooltip_aliases=None,
     extra_layers=None,
+    combine_as_pie=False,
+    min_radius=8,
+    max_radius=28,
+    pie_name=None,
+    pie_legend_title="Band",
+    pie_colors=None,
 ):
     """Like ``build_metric_bubble_map``, but adds one bubble layer per metric
     in ``metrics`` so directly related metrics (e.g. two expiration windows,
@@ -749,6 +859,30 @@ def build_grouped_bubble_map(
     Parameters mirror ``build_metric_bubble_map``, except ``metrics`` is a
     list of keys into ``metric_specs`` and ``subtitle`` is required (there is
     no single metric to derive default subtitle text from).
+
+    combine_as_pie : bool
+        By default (False), draws one full bubble layer per metric, each
+        independently toggleable — suited to metrics that rarely co-occur at
+        the same point (e.g. two non-overlapping expiration windows). Set
+        True when the same point commonly has nonzero values across several
+        metrics (e.g. AMI bands within one building): same-coordinate
+        stacked circles would hide each other, so instead this draws one
+        donut marker per point, sized by the summed total across ``metrics``
+        and split into wedges colored by ``GROUPED_BUBBLE_COLORS``.
+    pie_name : str or None
+        Layer-control label for the combined layer when ``combine_as_pie`` is
+        True (each metric's own ``short_label`` joined together reads poorly
+        past two metrics, so this is a single explicit label instead).
+        Defaults to ``title`` if not given.
+    pie_legend_title : str
+        Title for the wedge-color legend when ``combine_as_pie`` is True.
+        Put shared context here (e.g. "New construction by AMI band") rather
+        than repeating it on every band row.
+    pie_colors : list of str or None
+        Wedge color cycle when ``combine_as_pie`` is True. Defaults to
+        ``GROUPED_BUBBLE_COLORS``; pass a different list for groupings where
+        the shared categorical cycle doesn't fit (e.g. an ordered tier like
+        AMI bands, better read as a single-hue ramp than distinct hues).
     """
     tooltip_fields = tooltip_fields if tooltip_fields is not None else ["tract_label", "nta_name"]
     tooltip_aliases = tooltip_aliases if tooltip_aliases is not None else ["Census tract", "NTA"]
@@ -756,27 +890,34 @@ def build_grouped_bubble_map(
 
     add_demographic_backdrop_layers(map_object, tracts, demographic_specs)
 
-    for index, metric in enumerate(metrics):
-        spec = metric_specs[metric]
-        add_bubble_layer(
-            map_object,
-            tracts if points is None else points,
-            metric,
-            spec["label"],
-            spec["unit"],
-            name=spec["dimension"],
-            lat_col=lat_col,
-            lon_col=lon_col,
-            tooltip_fields=tooltip_fields,
-            tooltip_aliases=tooltip_aliases,
-            color=GROUPED_BUBBLE_COLORS[index % len(GROUPED_BUBBLE_COLORS)],
-            show=True,
-            overlay=True,
-            # Each bubble-size legend can be up to ~190px tall (title + 3
-            # reference rows at the default max_radius=22), so layers must be
-            # spaced further apart than that to avoid overlapping.
-            legend_bottom_offset=35 + index * 230,
+    if combine_as_pie:
+        _add_combined_pie_layer(
+            map_object, tracts if points is None else points, metrics, metric_specs,
+            lat_col, lon_col, tooltip_fields, tooltip_aliases, min_radius, max_radius,
+            pie_name or title, pie_legend_title, pie_colors or GROUPED_BUBBLE_COLORS,
         )
+    else:
+        for index, metric in enumerate(metrics):
+            spec = metric_specs[metric]
+            add_bubble_layer(
+                map_object,
+                tracts if points is None else points,
+                metric,
+                spec["label"],
+                spec["unit"],
+                name=spec["dimension"],
+                lat_col=lat_col,
+                lon_col=lon_col,
+                tooltip_fields=tooltip_fields,
+                tooltip_aliases=tooltip_aliases,
+                color=GROUPED_BUBBLE_COLORS[index % len(GROUPED_BUBBLE_COLORS)],
+                show=True,
+                overlay=True,
+                # Each bubble-size legend can be up to ~190px tall (title + 3
+                # reference rows at the default max_radius=22), so layers must be
+                # spaced further apart than that to avoid overlapping.
+                legend_bottom_offset=35 + index * 230,
+            )
 
     if extra_layers is not None:
         extra_layers(map_object)
