@@ -2,11 +2,17 @@
 
 ## Instructions
 For each domain of the CB3 equity report, produce a `scripts/<domain>/<domain>.py` cleaning script and a `scripts/<domain>/<domain>_maps.qmd` mapping notebook (see `README.md` for the full collaborator guide and shared conventions):
+
 a. Use `docs/proposed_concept_for_CB3_equity_report_v3.pdf` and `docs/CB3_Data_Reference_by_Domain_v4.csv` as project context.
+
 b. For each domain, find the relevant data source in its `data/raw/<Domain>/` folder and pull the information for each metric.
+
 c. Clean and format the raw data into the appropriate output shape (see Output below) — tract-level, point-level, or both, depending on the metric's native geography.
+
 d. Flag if the data is not already at the tract level (e.g., a different geographic unit). Some data may have to be geocoded and spatially joined into a tract.
+
 e. Register every metric in `docs/metric_metadata.yml` (labels, units, and — for demographic backdrop layers only — a palette). This is the only place those are defined; don't hardcode them in scripts or notebooks.
+
 f. Build the domain's Folium maps in the `.qmd` notebook using the shared helpers in `src/map_utils.py` (selectable demographic choropleths as backdrop, the domain's own metrics as bubble/point layers on top), and render with `quarto render` to confirm the maps actually display before considering the notebook done.
 
 

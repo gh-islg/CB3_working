@@ -25,5 +25,8 @@ desktop.ini
 .vscode/
 .idea/
 
+# Personal Claude Code overrides — not shared with collaborators
+.claude/settings.local.json
+
 # leave data off GH
 data/
