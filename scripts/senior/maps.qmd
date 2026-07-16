@@ -29,7 +29,6 @@ from src.map_utils import (
     add_categorical_point_layer,
     add_demographic_backdrop_layers,
     add_map_title,
-    build_grouped_bubble_map,
     build_metric_bubble_map,
     find_project_dir,
     make_base_map,
@@ -125,6 +124,15 @@ if not demographic_keys:
     )
 
 demographic_specs = {key: metadata[key] for key in demographic_keys}
+
+# map_utils.add_metric_layer() requires every demographic layer spec to have a dimension.
+# Keep this local to Senior so we do not edit shared metadata used by other domains.
+for key, spec in demographic_specs.items():
+    spec.setdefault("dimension", spec.get("short_label", spec.get("label", key)))
+
+
+
+
 
 service_site_spec = metadata["senior_service_sites"]
 pedestrian_spec = metadata["senior_pedestrian_safety_points"]
@@ -305,6 +313,7 @@ poverty_metrics = {
         "title": "CB3 Seniors: White non-Hispanic senior poverty",
     },
 }
+
 
 for metric, settings in poverty_metrics.items():
     if metric not in tracts.columns or tracts[metric].notna().sum() == 0:
