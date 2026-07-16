@@ -406,193 +406,130 @@ hurricane_evacuation_zone:
 # --- Demographics (baseline context, not domain outcomes) ---
 
 median_household_income:
-  domain: senior-context
+  domain: demographics
   short_label: Median household income
-  dimension: Median household income
   label: Median household income
-  description: Median household income by census tract.
+  description: Median household income in the past 12 months (inflation-adjusted).
   unit: "$"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f7fcf5", "#c7e9c0", "#74c476", "#238b45", "#00441b"]
+  source: ACS 5-year estimates, table B19013
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
-  display_format: currency
-  filename: context_only.html
-  palette:
-    - "#f7fcf0"
-    - "#ccebc5"
-    - "#7bccc4"
-    - "#2b8cbe"
-    - "#084081"
+  higher_is: better
+  map_classification: quintile
+  display_format: dollar
 
 age_0_to_19_share:
-  domain: senior-context
-  short_label: Age 0-19
-  dimension: Age 0-19
-  label: Age 0-19
-  description: Share of residents ages 0 to 19 by census tract.
+  domain: demographics
+  short_label: "Age 0-19"
+  label: Residents age 0 to 19
+  description: Share of the total population aged 0 to 19.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: ACS 5-year estimates, table B01001
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: neutral
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
 
 age_20_to_64_share:
-  domain: senior-context
-  short_label: Age 20-64
-  dimension: Age 20-64
-  label: Age 20-64
-  description: Share of residents ages 20 to 64 by census tract.
+  domain: demographics
+  short_label: "Age 20-64"
+  label: Residents age 20 to 64
+  description: Share of the total population aged 20 to 64.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: ACS 5-year estimates, table B01001
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: neutral
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
 
 age_65_plus_share:
-  domain: senior-context
-  short_label: Age 65+
-  dimension: Age 65+
-  label: Age 65+
-  description: Share of residents ages 65 and older by census tract.
+  domain: demographics
+  short_label: "Age 65+"
+  label: Residents age 65 or older
+  description: Share of the total population aged 65 or older.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: ACS 5-year estimates, table B01001
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: neutral
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#fff7ec"
-    - "#fee8c8"
-    - "#fdbb84"
-    - "#e34a33"
-    - "#b30000"
 
 white_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: White non-Hispanic share
-  dimension: White non-Hispanic share
-  label: White non-Hispanic share
-  description: Share of residents identifying as White non-Hispanic by census tract.
+  label: White non-Hispanic residents
+  description: Share of the total population identifying as White alone, not Hispanic or Latino.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f7f4f9", "#d4b9da", "#df65b0", "#ce1256", "#67001f"]
+  source: ACS 5-year estimates, table B03002
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: neutral
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
 
 black_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Black non-Hispanic share
-  dimension: Black non-Hispanic share
-  label: Black non-Hispanic share
-  description: Share of residents identifying as Black non-Hispanic by census tract.
+  label: Black non-Hispanic residents
+  description: Share of the total population identifying as Black or African American alone, not Hispanic or Latino.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f7f4f9", "#d4b9da", "#df65b0", "#ce1256", "#67001f"]
+  source: ACS 5-year estimates, table B03002
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: neutral
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
 
 asian_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Asian non-Hispanic share
-  dimension: Asian non-Hispanic share
-  label: Asian non-Hispanic share
-  description: Share of residents identifying as Asian non-Hispanic by census tract.
+  label: Asian non-Hispanic residents
+  description: Share of the total population identifying as Asian alone, not Hispanic or Latino.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f7f4f9", "#d4b9da", "#df65b0", "#ce1256", "#67001f"]
+  source: ACS 5-year estimates, table B03002
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: neutral
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
 
 hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Hispanic share
-  dimension: Hispanic share
-  label: Hispanic share
-  description: Share of residents identifying as Hispanic by census tract.
+  label: Hispanic residents of any race
+  description: Share of the total population identifying as Hispanic or Latino of any race.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f7f4f9", "#d4b9da", "#df65b0", "#ce1256", "#67001f"]
+  source: ACS 5-year estimates, table B03002
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: neutral
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
 
 poverty_rate:
-  domain: senior-context
+  domain: demographics
   short_label: Poverty rate
-  dimension: Poverty rate
-  label: Poverty rate
-  description: Share of residents below poverty by census tract.
+  label: Population below poverty level
+  description: Share of the population for whom poverty status was determined living below the federal poverty level.
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
+  source: ACS 5-year estimates, table B17001
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: worse
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#fff7ec"
-    - "#fee8c8"
-    - "#fdbb84"
-    - "#e34a33"
-    - "#b30000"
 
 senior_poverty_rate:
   domain: demographics
@@ -609,297 +546,260 @@ senior_poverty_rate:
   display_format: percent
 
 lep_household_share:
-  domain: senior-context
+  domain: demographics
   short_label: Limited-English-proficient households
-  dimension: Limited-English-proficient households
   label: Limited-English-proficient households
-  description: Share of households with limited English proficiency by census tract.
+  description: >
+    Share of households where no member aged 14 or older speaks English
+    "very well" (limited-English-proficient households).
   unit: "%"
-  source: ACS 2020-2024 5-year estimates / shared CB3 baseline
-  year: 2024
+  palette: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"]
+  source: ACS 5-year estimates, table B16002
+  year: 2023
   geography: Census tract
-  higher_is: context
-  map_classification: background
+  higher_is: neutral
+  map_classification: quintile
   display_format: percent
-  filename: context_only.html
-  palette:
-    - "#f7fcf5"
-    - "#e5f5e0"
-    - "#a1d99b"
-    - "#31a354"
-    - "#006d2c"
 
 # --- Health ---
-
-fair_or_poor_general_health_pct:
-  domain: health
-  short_label: Fair or poor general health
-  label: Adults reporting fair or poor general health
-  description: >
-    Estimated percentage of adults reporting fair or poor general health.
-  unit: "%"
-  source: CDC PLACES 2025 release
-  year: 2025
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: fair_or_poor_general_health.html
-
-diagnosed_diabetes_pct:
-  domain: health
-  short_label: Diagnosed diabetes
-  label: Adults with diagnosed diabetes
-  description: >
-    Estimated percentage of adults with diagnosed diabetes.
-  unit: "%"
-  source: CDC PLACES 2025 release
-  year: 2025
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: diagnosed_diabetes.html
 
 uninsured_adults_pct:
   domain: health
   short_label: Uninsured adults
-  label: Adults without health insurance
+  label: Uninsured adults
   description: >
     Estimated percentage of adults without health insurance.
   unit: "%"
-  source: CDC PLACES 2025 release
+  palette: ["#ffffcc", "#feb24c", "#f03b20", "#bd0026", "#7a0177"]
+  source: CDC PLACES 2025 release, ACCESS2_CrudePrev
   year: 2025
   geography: Census tract
   higher_is: worse
-  map_classification: bubble
+  map_classification: quintile
   display_format: percent
-  filename: uninsured_adults.html
+  filename: uninsured_adults_pct.html
 
-pediatric_asthma_ed_rate:
+no_routine_checkup_pct:
   domain: health
-  short_label: Pediatric asthma ED visits
-  label: Pediatric asthma emergency department visit rate
+  short_label: No routine checkup
+  label: Adults without routine checkup in past year
   description: >
-    Pediatric asthma emergency department visit rate at NTA geography.
-  unit: per 10,000 children
-  source: NYC DOHMH
-  year: latest available
-  geography: NTA centroid overlay
+    Calculated as 100 minus CDC PLACES CHECKUP_CrudePrev.
+    Used as a proxy for limited primary care access.
+  unit: "%"
+  palette: ["#ffffcc", "#feb24c", "#f03b20", "#bd0026", "#7a0177"]
+  source: CDC PLACES 2025 release, calculated from CHECKUP_CrudePrev
+  year: 2025
+  geography: Census tract
   higher_is: worse
+  map_classification: quintile
+  display_format: percent
+  filename: no_routine_checkup_pct.html
+
+# --- Economic Security & Food ---
+
+safety_net_enrollment_per_capita:
+  domain: economic-security-food
+  short_label: Safety-net enrollment
+  label: Safety-net enrollment per capita
+  description: >
+    Community District-level Medicaid, SNAP, and cash assistance enrollment context
+    divided by the tract ACS poverty-universe population. This is contextual and
+    should not be interpreted as tract-assigned enrollment.
+  unit: ""
+  source: NYC District Resource Statement and ACS 5-year estimates
+  year: 2024
+  geography: Census tract with Community District context
+  higher_is: context
   map_classification: bubble
   display_format: number
-  filename: pediatric_asthma_ed_rate.html
+  filename: safety_net_reliance_by_tract.html
 
-health_provider_sites:
-  domain: health-provider
-  short_label: Health provider sites
-  label: Health provider sites
+poverty_rate_pct:
+  domain: economic-security-food-context
+  short_label: Poverty rate
+  label: Poverty rate
   description: >
-    FQHC and mental-health provider site point overlays.
-  category_colors:
-    FQHC site: "#252525"
-    Mental-health provider site: "#6a51a3"
-  source: HRSA and NYS OMH local mental-health program data
+    Share of residents whose income in the past 12 months was below the poverty level.
+  unit: "%"
+  source: ACS 5-year estimates, table B17020
+  year: 2024
+  geography: Census tract
+  higher_is: worse
+  map_classification: tooltip
+  display_format: percent
+  filename: context_only.html
+
+unemployment_rate_pct:
+  domain: economic-security-food
+  short_label: Unemployment rate
+  label: Unemployment rate
+  description: >
+    Share of the civilian labor force that is unemployed.
+  unit: "%"
+  source: ACS 5-year estimates, table B23025
+  year: 2024
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: labor_market_conditions_by_tract.html
+
+median_earnings_all_workers:
+  domain: economic-security-food-context
+  short_label: Median earnings
+  label: Median earnings for all workers
+  description: >
+    Median earnings in the past 12 months for all workers.
+  unit: "$"
+  source: ACS 5-year estimates, table B20002
+  year: 2024
+  geography: Census tract
+  higher_is: better
+  map_classification: tooltip
+  display_format: currency
+  filename: context_only.html
+
+food_insecurity_rate_pct:
+  domain: economic-security-food
+  short_label: Food insecurity
+  label: Food insecurity rate
+  description: >
+    Estimated food insecurity prevalence from CDC PLACES.
+  unit: "%"
+  source: CDC PLACES
+  year: 2025 release
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: food_insecurity_by_tract.html
+
+food_supply_gap_rank_nta:
+  domain: economic-security-food-context
+  short_label: Food supply gap rank
+  label: Food supply gap rank by NTA
+  description: >
+    NTA-level emergency food supply gap rank joined to CB3 tracts by NTA.
+  unit: ""
+  source: NYC emergency food supply gap data
   year: 2026
-  geography: Provider point
-  higher_is: n/a
-  map_classification: categorical
-  display_format: category
-  filename: provider_access.html
+  geography: NTA joined to census tract
+  higher_is: context
+  map_classification: tooltip
+  display_format: number
+  filename: context_only.html
+
+food_supply_gap_score_nta:
+  domain: economic-security-food-context
+  short_label: Food supply gap score
+  label: Food supply gap score by NTA
+  description: >
+    NTA-level weighted emergency food supply gap score joined to CB3 tracts by NTA.
+  unit: ""
+  source: NYC emergency food supply gap data
+  year: 2026
+  geography: NTA joined to census tract
+  higher_is: worse
+  map_classification: tooltip
+  display_format: number
+  filename: context_only.html
+
+food_supply_gap_food_insecure_pct_nta:
+  domain: economic-security-food-context
+  short_label: NTA food insecure share
+  label: Food insecure percentage by NTA
+  description: >
+    NTA-level food insecure percentage from emergency food supply gap data joined
+    to CB3 tracts by NTA.
+  unit: "%"
+  source: NYC emergency food supply gap data
+  year: 2026
+  geography: NTA joined to census tract
+  higher_is: worse
+  map_classification: tooltip
+  display_format: percent
+  filename: context_only.html
+
+utility_shutoff_risk_pct:
+  domain: economic-security-food
+  short_label: Utility shutoff risk
+  label: Utility shutoff risk
+  description: >
+    Estimated prevalence of utility shutoff risk from CDC PLACES.
+  unit: "%"
+  source: CDC PLACES
+  year: 2025 release
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: utility_shutoff_risk_by_tract.html
 
 # --- Senior ---
-senior_65plus_population:
-  domain: senior-context
-  short_label: Senior population
-  label: Population age 65+
-  dimension: Senior population
-  description: Population age 65 and older by census tract.
-  unit: ""
-  source: 2020-2024 ACS B16004 / Kailey Senior tract rates
-  year: 2024
-  geography: Census tract
-  higher_is: context
-  map_classification: choropleth
-  display_format: count
-  filename: context_only.html
-  palette:
-    - "#f7fcf5"
-    - "#c7e9c0"
-    - "#74c476"
-    - "#238b45"
-    - "#00441b"
-
-asian_senior_poverty_rate_60plus_pct:
-  domain: senior
-  short_label: Asian senior poverty
-  label: Asian senior poverty rate
-  dimension: Senior poverty by race/ethnicity
-  description: Poverty rate among Asian residents age 60+.
-  unit: "%"
-  source: 2020-2024 ACS B17020 by race / Kailey Senior tract rates
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: senior_poverty_by_race.html
-  palette:
-    - "#fff5eb"
-    - "#fdd0a2"
-    - "#fd8d3c"
-    - "#e6550d"
-    - "#a63603"
-
-black_senior_poverty_rate_60plus_pct:
-  domain: senior
-  short_label: Black senior poverty
-  label: Black senior poverty rate
-  dimension: Senior poverty by race/ethnicity
-  description: Poverty rate among Black residents age 60+.
-  unit: "%"
-  source: 2020-2024 ACS B17020 by race / Kailey Senior tract rates
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: senior_poverty_by_race.html
-  palette:
-    - "#fff5eb"
-    - "#fdd0a2"
-    - "#fd8d3c"
-    - "#e6550d"
-    - "#a63603"
-
-hispanic_senior_poverty_rate_60plus_pct:
-  domain: senior
-  short_label: Hispanic senior poverty
-  label: Hispanic senior poverty rate
-  dimension: Senior poverty by race/ethnicity
-  description: Poverty rate among Hispanic residents age 60+.
-  unit: "%"
-  source: 2020-2024 ACS B17020 by race / Kailey Senior tract rates
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: senior_poverty_by_race.html
-  palette:
-    - "#fff5eb"
-    - "#fdd0a2"
-    - "#fd8d3c"
-    - "#e6550d"
-    - "#a63603"
-
-white_nh_senior_poverty_rate_60plus_pct:
-  domain: senior
-  short_label: White non-Hispanic senior poverty
-  label: White non-Hispanic senior poverty rate
-  dimension: Senior poverty by race/ethnicity
-  description: Poverty rate among White non-Hispanic residents age 60+.
-  unit: "%"
-  source: 2020-2024 ACS B17020 by race / Kailey Senior tract rates
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: senior_poverty_by_race.html
-  palette:
-    - "#fff5eb"
-    - "#fdd0a2"
-    - "#fd8d3c"
-    - "#e6550d"
-    - "#a63603"
-
-senior_lep_rate_pct:
-  domain: senior
-  short_label: Senior LEP rate
-  label: Senior limited English proficiency rate
-  dimension: Senior LEP by language
-  description: Share of residents age 65+ who are limited English proficient.
-  unit: "%"
-  source: 2020-2024 ACS B16004 / Kailey Senior tract rates
-  year: 2024
-  geography: Census tract
-  higher_is: context
-  map_classification: bubble
-  display_format: percent
-  filename: senior_lep_rate.html
-  palette:
-    - "#f7fbff"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
-    - "#08306b"
-
-senior_walkup_rate_pct:
-  domain: senior
-  short_label: Walk-up building rate
-  label: Estimated walk-up building rate
-  dimension: Senior housing access
-  description: Estimated share of 3+ floor multifamily residential buildings without elevator access.
-  unit: "%"
-  source: NYC DCP MapPLUTO / Kailey Senior tract rates
-  year: 2026
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: senior_housing_walkup_access.html
-  palette:
-    - "#f7f7f7"
-    - "#cccccc"
-    - "#969696"
-    - "#636363"
-    - "#252525"
-
 senior_service_sites:
   domain: senior
   short_label: Senior service sites
-  dimension: Senior service supply
-  label: Older Adult Centers and NORCs
-  description: DFTA-funded Older Adult Centers and Naturally Occurring Retirement Communities in CB3.
+  dimension: Senior service access
+  label: Senior service sites
+  description: Senior-serving facilities and sites located in or serving Manhattan Community District 3.
   unit: sites
-  source: NYC Aging Providers, 2024
-  year: 2024
-  geography: Point
+  source: NYC Aging provider locations
+  year: 2026
+  geography: Point location
   higher_is: context
-  map_classification: categorical_point
+  map_classification: categorical_points
   display_format: count
   filename: senior_service_supply.html
   category_colors:
-    Older Adult Center: "#252525"
-    NORC: "#6a51a3"
+    Senior center: "#1f77b4"
+    NORC: "#ff7f0e"
+    Case management: "#2ca02c"
+    Other senior service: "#7f7f7f"
 
 senior_pedestrian_safety_points:
   domain: senior
-  short_label: Senior pedestrian incidents
+  short_label: Senior pedestrian safety points
   dimension: Senior pedestrian safety
-  label: Senior pedestrian incidents and fatalities
-  description: Senior pedestrian crashes joined from Vision Zero crashes and person tables, filtered to CB3 and 2024-2025.
-  unit: incidents
-  source: NYC OpenData Vision Zero Crashes and Person tables
+  label: Senior pedestrian crash points
+  description: Pedestrian crashes involving older adults in or near Manhattan Community District 3.
+  unit: crashes
+  source: NYC Vision Zero crash and person records
   year: 2024-2025
-  geography: Point
+  geography: Point location
   higher_is: worse
-  map_classification: categorical_point
+  map_classification: categorical_points
   display_format: count
   filename: senior_pedestrian_safety.html
   category_colors:
-    Senior pedestrian injury/incident: "#525252"
-    Senior pedestrian fatality: "#cb181d"
+    Senior pedestrian injury/incident: "#ff7f0e"
+    Senior pedestrian fatality: "#d62728"
+
+senior_pedestrian_top_intersections:
+  domain: senior
+  short_label: Top senior pedestrian crash intersections
+  dimension: Senior pedestrian safety
+  label: Top senior pedestrian crash intersections
+  description: Top intersections for senior pedestrian crashes in or near Manhattan Community District 3.
+  unit: intersections
+  source: NYC Vision Zero crash and person records
+  year: 2024-2025
+  geography: Point location
+  higher_is: worse
+  map_classification: categorical_points
+  display_format: count
+  filename: senior_pedestrian_safety.html
+  category_colors:
+    Top senior pedestrian crash intersection: "#9467bd"
 
 asian_senior_poverty_rate_60plus:
   domain: senior
   short_label: Asian senior poverty
-  dimension: Asian senior poverty
-  label: Asian senior poverty rate
-  description: Share of Asian residents age 60+ in poverty.
+  dimension: Senior poverty
+  label: Asian seniors in poverty
+  description: Share of Asian residents age 60 and older living below poverty.
   unit: "%"
-  source: ACS 2020-2024 B17020D
+  source: ACS 2020-2024 B17020
   year: 2024
   geography: Census tract
   higher_is: worse
@@ -907,20 +807,20 @@ asian_senior_poverty_rate_60plus:
   display_format: percent
   filename: senior_poverty_asian.html
   palette:
-    - "#fff5f0"
-    - "#fee0d2"
-    - "#fcbba1"
-    - "#fb6a4a"
-    - "#cb181d"
+    - "#f7fbff"
+    - "#c6dbef"
+    - "#6baed6"
+    - "#2171b5"
+    - "#08306b"
 
 black_senior_poverty_rate_60plus:
   domain: senior
   short_label: Black senior poverty
-  dimension: Black senior poverty
-  label: Black senior poverty rate
-  description: Share of Black residents age 60+ in poverty.
+  dimension: Senior poverty
+  label: Black seniors in poverty
+  description: Share of Black residents age 60 and older living below poverty.
   unit: "%"
-  source: ACS 2020-2024 B17020B
+  source: ACS 2020-2024 B17020
   year: 2024
   geography: Census tract
   higher_is: worse
@@ -929,19 +829,19 @@ black_senior_poverty_rate_60plus:
   filename: senior_poverty_black.html
   palette:
     - "#fff5f0"
-    - "#fee0d2"
     - "#fcbba1"
+    - "#fc9272"
     - "#fb6a4a"
     - "#cb181d"
 
 hispanic_senior_poverty_rate_60plus:
   domain: senior
   short_label: Hispanic senior poverty
-  dimension: Hispanic senior poverty
-  label: Hispanic senior poverty rate
-  description: Share of Hispanic residents age 60+ in poverty.
+  dimension: Senior poverty
+  label: Hispanic seniors in poverty
+  description: Share of Hispanic residents age 60 and older living below poverty.
   unit: "%"
-  source: ACS 2020-2024 B17020I
+  source: ACS 2020-2024 B17020
   year: 2024
   geography: Census tract
   higher_is: worse
@@ -949,20 +849,20 @@ hispanic_senior_poverty_rate_60plus:
   display_format: percent
   filename: senior_poverty_hispanic.html
   palette:
-    - "#fff5f0"
-    - "#fee0d2"
-    - "#fcbba1"
-    - "#fb6a4a"
-    - "#cb181d"
+    - "#fff7ec"
+    - "#fdd49e"
+    - "#fdbb84"
+    - "#fc8d59"
+    - "#d7301f"
 
 white_nh_senior_poverty_rate_60plus:
   domain: senior
   short_label: White non-Hispanic senior poverty
-  dimension: White non-Hispanic senior poverty
-  label: White non-Hispanic senior poverty rate
-  description: Share of White non-Hispanic residents age 60+ in poverty.
+  dimension: Senior poverty
+  label: White non-Hispanic seniors in poverty
+  description: Share of White non-Hispanic residents age 60 and older living below poverty.
   unit: "%"
-  source: ACS 2020-2024 B17020H
+  source: ACS 2020-2024 B17020
   year: 2024
   geography: Census tract
   higher_is: worse
@@ -970,77 +870,18 @@ white_nh_senior_poverty_rate_60plus:
   display_format: percent
   filename: senior_poverty_white_non_hispanic.html
   palette:
-    - "#fff5f0"
-    - "#fee0d2"
-    - "#fcbba1"
-    - "#fb6a4a"
-    - "#cb181d"
-
-senior_lep_rate_65plus:
-  domain: senior-context
-  short_label: Senior LEP total
-  dimension: Senior LEP total
-  label: Senior limited-English-proficiency rate
-  description: Total senior limited-English-proficiency rate. Kept in clean data as context; separate language maps use language-specific metrics.
-  unit: "%"
-  source: ACS 2020-2024 B16004
-  year: 2024
-  geography: Census tract
-  higher_is: context
-  map_classification: tooltip
-  display_format: percent
-  filename: context_only.html
-  palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
-
-mltfam_walkup_rate:
-  domain: senior
-  short_label: Multifamily walk-up rate
-  dimension: Senior housing access
-  label: Multifamily buildings without elevator access
-  description: Estimated share of 3+ floor multifamily buildings without elevator access. Current build uses Kailey's tract-rate fallback unless MapPLUTO and HPD BIS elevator raw files are added.
-  unit: "%"
-  source: NYC DCP MapPLUTO; HPD BIS elevator inspection records; Kailey tract-rate fallback
-  year: 2024
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: senior_housing_walkup_access.html
-  palette:
     - "#f7fcf5"
-    - "#e5f5e0"
     - "#c7e9c0"
     - "#74c476"
     - "#238b45"
-
-senior_pedestrian_top_intersections:
-  domain: senior
-  short_label: Top senior pedestrian intersections
-  dimension: Senior pedestrian safety
-  label: Top senior pedestrian crash intersections
-  description: Top five senior pedestrian crash intersections from the joined Vision Zero crash/person input.
-  unit: intersections
-  source: NYC OpenData Vision Zero Crashes and Person tables; CB3 Senior domain memo
-  year: 2024-2025
-  geography: Point
-  higher_is: worse
-  map_classification: categorical_point
-  display_format: count
-  filename: senior_pedestrian_safety.html
-  category_colors:
-    Top senior pedestrian crash intersection: "#fdae61"
+    - "#00441b"
 
 spanish_senior_lep_rate_65plus:
   domain: senior
-  short_label: Spanish senior LEP
-  dimension: Senior LEP - Spanish
+  short_label: Spanish-speaking senior LEP
+  dimension: Senior limited English proficiency
   label: Spanish-speaking seniors with limited English proficiency
-  description: Share of residents age 65+ who speak Spanish and speak English less than very well.
+  description: Share of residents age 65 and older in Spanish-speaking households with limited English proficiency.
   unit: "%"
   source: ACS 2020-2024 B16004
   year: 2024
@@ -1051,17 +892,17 @@ spanish_senior_lep_rate_65plus:
   filename: senior_lep_spanish.html
   palette:
     - "#f7fbff"
-    - "#deebf7"
     - "#c6dbef"
     - "#6baed6"
     - "#2171b5"
+    - "#08306b"
 
 other_indo_european_senior_lep_rate_65plus:
   domain: senior
   short_label: Other Indo-European senior LEP
-  dimension: Senior LEP - Other Indo-European
-  label: Seniors speaking other Indo-European languages with limited English proficiency
-  description: Share of residents age 65+ who speak other Indo-European languages and speak English less than very well.
+  dimension: Senior limited English proficiency
+  label: Other Indo-European-speaking seniors with limited English proficiency
+  description: Share of residents age 65 and older in other Indo-European-speaking households with limited English proficiency.
   unit: "%"
   source: ACS 2020-2024 B16004
   year: 2024
@@ -1071,18 +912,18 @@ other_indo_european_senior_lep_rate_65plus:
   display_format: percent
   filename: senior_lep_other_indo_european.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#fff7ec"
+    - "#fdd49e"
+    - "#fdd0a2"
+    - "#f16913"
+    - "#7f2704"
 
 asian_pacific_senior_lep_rate_65plus:
   domain: senior
-  short_label: Asian/Pacific senior LEP
-  dimension: Senior LEP - Asian/Pacific Island
-  label: Seniors speaking Asian/Pacific Island languages with limited English proficiency
-  description: Share of residents age 65+ who speak Asian/Pacific Island languages and speak English less than very well.
+  short_label: Asian and Pacific Islander senior LEP
+  dimension: Senior limited English proficiency
+  label: Asian and Pacific Islander-speaking seniors with limited English proficiency
+  description: Share of residents age 65 and older in Asian and Pacific Islander-speaking households with limited English proficiency.
   unit: "%"
   source: ACS 2020-2024 B16004
   year: 2024
@@ -1092,18 +933,18 @@ asian_pacific_senior_lep_rate_65plus:
   display_format: percent
   filename: senior_lep_asian_pacific.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7fcf5"
+    - "#c7e9c0"
+    - "#74c476"
+    - "#238b45"
+    - "#00441b"
 
 other_languages_senior_lep_rate_65plus:
   domain: senior
   short_label: Other-language senior LEP
-  dimension: Senior LEP - Other languages
+  dimension: Senior limited English proficiency
   label: Seniors speaking other languages with limited English proficiency
-  description: Share of residents age 65+ who speak other languages and speak English less than very well.
+  description: Share of residents age 65 and older in other-language households with limited English proficiency.
   unit: "%"
   source: ACS 2020-2024 B16004
   year: 2024
@@ -1113,8 +954,29 @@ other_languages_senior_lep_rate_65plus:
   display_format: percent
   filename: senior_lep_other_languages.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#fcfbfd"
+    - "#dadaeb"
+    - "#bcbddc"
+    - "#807dba"
+    - "#4a1486"
+
+mltfam_walkup_rate:
+  domain: senior
+  short_label: Walk-up multifamily buildings
+  dimension: Senior housing accessibility
+  label: Multifamily walk-up building rate
+  description: Share of multifamily residential buildings without elevator access.
+  unit: "%"
+  source: MapPLUTO / HPD elevator availability fallback
+  year: 2024
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: senior_housing_walkup_access.html
+  palette:
+    - "#ffffcc"
+    - "#ffeda0"
+    - "#feb24c"
+    - "#f03b20"
+    - "#bd0026"
