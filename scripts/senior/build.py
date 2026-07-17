@@ -1,278 +1,708 @@
-"""Build CB3 Language clean file from ACS B16001 person-level language data.
+"""Build Senior domain clean files from raw source files.
 
-Supervisor-directed logic:
-- Use ACS B16001 person-level language data for mapped language metrics.
-- Produce three mapped metrics: Spanish, Chinese, and Other.
-- Other = Tagalog + Korean + French/Haitian/Cajun + Arabic + Russian/Slavic + Vietnamese.
-- Keep C16002 household LEP only as demographic/context layer: lep_household_share.
-- Write one map-ready clean file: data/clean/language.csv.
+Outputs
+-------
+data/clean/senior.csv
+data/clean/senior_facilities.csv
+data/clean/senior_pedestrian_crashes.csv
+data/clean/senior_top_intersections.csv
+data/clean/senior_build_log.txt
+
+This script intentionally keeps mapping logic out of build.py. It prepares
+map-ready clean files with GEOID, tract labels, centroids, and geometry_wkt so
+scripts/senior/maps.qmd can render maps with src/map_utils.py.
 """
 
-from __future__ import annotations
-
-import re
 from pathlib import Path
+import csv
+import re
 import sys
-from typing import Iterable
 
 import geopandas as gpd
+import numpy as np
 import pandas as pd
 
-PROJECT_DIR = Path(__file__).resolve().parents[2]
+
+def find_project_dir(required_dirs=("data", "docs", "src")):
+    """Find project root by walking upward from current file/cwd."""
+    start_points = [Path.cwd(), Path(__file__).resolve()]
+    for start in start_points:
+        for candidate in [start, *start.parents]:
+            if all((candidate / directory).exists() for directory in required_dirs):
+                return candidate
+    required = ", ".join(required_dirs)
+    raise FileNotFoundError(f"Could not find project root containing: {required}")
+
+
+PROJECT_DIR = find_project_dir()
 if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
-from src.cb3_utils import clean_census_values, load_cb3_tract_universe
+from src.cb3_utils import (  # noqa: E402
+    add_acs_geoid,
+    add_polygon_centroids,
+    assign_points_to_cb3_tract,
+    clean_census_values,
+    load_cb3_tract_universe,
+)
 
-CLEAN_DIR = PROJECT_DIR / "data" / "clean"
-OUTPUT_PATH = CLEAN_DIR / "language.csv"
-LOG_PATH = CLEAN_DIR / "language_build_log.txt"
+RAW = PROJECT_DIR / "data" / "raw" / "Seniors"
+CLEAN = PROJECT_DIR / "data" / "clean"
 
-RAW_DIR_CANDIDATES = [
-    PROJECT_DIR / "data" / "raw" / "Language",
-    PROJECT_DIR / "data" / "raw" / "Demographics",
-    PROJECT_DIR / "data" / "raw" / "ACS",
-    PROJECT_DIR / "data" / "raw",
+SENIOR_OUTPUT = CLEAN / "senior.csv"
+FACILITIES_OUTPUT = CLEAN / "senior_facilities.csv"
+CRASHES_OUTPUT = CLEAN / "senior_pedestrian_crashes.csv"
+TOP_INTERSECTIONS_OUTPUT = CLEAN / "senior_top_intersections.csv"
+LOG_OUTPUT = CLEAN / "senior_build_log.txt"
+
+
+DEMOGRAPHIC_SOURCE_CANDIDATES = [
+    CLEAN / "tract_baseline_profile_clean.csv",
+    CLEAN / "tract_baseline_profile_partial_before_crosswalk.csv",
+    CLEAN / "tract_baseline_profile_partial_before_crosswalk_clean.csv",
+    CLEAN / "cb3_tract_baseline_profile.csv",
+    CLEAN / "cb3_tract_baseline_profile_clean.csv",
+    CLEAN / "language.csv",
+    CLEAN / "economic-food.csv",
+    CLEAN / "health.csv",
 ]
 
-BASELINE_CANDIDATES = [
-    CLEAN_DIR / "tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk_clean.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv",
+DEMOGRAPHIC_COLUMNS = [
+    "median_household_income",
+    "age_0_to_19_share",
+    "age_20_to_64_share",
+    "age_65_plus_share",
+    "white_non_hispanic_share",
+    "black_non_hispanic_share",
+    "asian_non_hispanic_share",
+    "hispanic_share",
+    "poverty_rate",
+    "lep_household_share",
 ]
 
-ID_COLUMNS = {"GEOID", "NAME", "state", "county", "tract", "geoid", "GEOID20", "GEO_ID"}
-
-B16001_LANGUAGE_GROUPS = {
-    "spanish": {"speaker_col": "B16001_003E", "very_well_col": "B16001_004E", "lep_col": "B16001_005E"},
-    "french_haitian_cajun": {"speaker_col": "B16001_006E", "very_well_col": "B16001_007E", "lep_col": "B16001_008E"},
-    "russian_slavic": {"speaker_col": "B16001_012E", "very_well_col": "B16001_013E", "lep_col": "B16001_014E"},
-    "korean": {"speaker_col": "B16001_018E", "very_well_col": "B16001_019E", "lep_col": "B16001_020E"},
-    "chinese": {"speaker_col": "B16001_021E", "very_well_col": "B16001_022E", "lep_col": "B16001_023E"},
-    "vietnamese": {"speaker_col": "B16001_024E", "very_well_col": "B16001_025E", "lep_col": "B16001_026E"},
-    "tagalog": {"speaker_col": "B16001_027E", "very_well_col": "B16001_028E", "lep_col": "B16001_029E"},
-    "arabic": {"speaker_col": "B16001_033E", "very_well_col": "B16001_034E", "lep_col": "B16001_035E"},
+RACE_SPECS = {
+    "asian": "Asian",
+    "black": "Black",
+    "hispanic": "Hispanic",
+    "white_nh": "White non-Hispanic",
 }
 
-OTHER_LANGUAGE_COMPONENTS = [
-    "tagalog",
-    "korean",
-    "french_haitian_cajun",
-    "arabic",
-    "russian_slavic",
-    "vietnamese",
+# ACS B17020 race suffixes used by Kailey's R memo.
+RACE_TABLE_LETTERS = {
+    "white": "A",
+    "black": "B",
+    "aian": "C",
+    "asian": "D",
+    "nhpi": "E",
+    "other": "F",
+    "two_or_more": "G",
+    "white_nh": "H",
+    "hispanic": "I",
+}
+
+# Memo/R file used 60+ poverty cells from B17020 race tables:
+# below poverty = 007, 008, 009; at/above poverty = 015, 016, 017.
+POVERTY_BELOW_CODES = ["007", "008", "009"]
+POVERTY_ABOVE_CODES = ["015", "016", "017"]
+
+# Memo/R file used age 65+ B16004 cells, including "well", "not well",
+# and "not at all" for non-English language groups.
+SENIOR_LEP_COLUMNS = [
+    "B16004_050E", "B16004_051E", "B16004_052E",  # Spanish
+    "B16004_055E", "B16004_056E", "B16004_057E",  # Other Indo-European
+    "B16004_060E", "B16004_061E", "B16004_062E",  # Asian/Pacific Island
+    "B16004_065E", "B16004_066E", "B16004_067E",  # Other languages
 ]
 
+SENIOR_LEP_LANGUAGE_SPECS = {
+    "spanish": {
+        "label": "Spanish",
+        "columns": ["B16004_050E", "B16004_051E", "B16004_052E"],
+    },
+    "other_indo_european": {
+        "label": "Other Indo-European languages",
+        "columns": ["B16004_055E", "B16004_056E", "B16004_057E"],
+    },
+    "asian_pacific": {
+        "label": "Asian and Pacific Island languages",
+        "columns": ["B16004_060E", "B16004_061E", "B16004_062E"],
+    },
+    "other_languages": {
+        "label": "Other languages",
+        "columns": ["B16004_065E", "B16004_066E", "B16004_067E"],
+    },
+}
 
-def normalize_column_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", str(value).lower())
+
+def _log(lines, message):
+    print(message)
+    lines.append(message)
 
 
-def find_column(df: pd.DataFrame, candidates: Iterable[str]) -> str | None:
-    lookup = {normalize_column_name(column): column for column in df.columns}
-    for candidate in candidates:
-        if candidate in df.columns:
-            return candidate
-        normalized = normalize_column_name(candidate)
-        if normalized in lookup:
-            return lookup[normalized]
+def _normalise_name(name):
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def resolve_file(patterns, required=True):
+    """Find the first raw Senior file whose normalized name contains a pattern."""
+    if not RAW.exists():
+        if required:
+            raise FileNotFoundError(f"Missing raw Seniors folder: {RAW}")
+        return None
+
+    files = [path for path in RAW.iterdir() if path.is_file()]
+    normalized = {path: _normalise_name(path.name) for path in files}
+
+    for pattern in patterns:
+        pattern_norm = _normalise_name(pattern)
+        matches = [path for path, name in normalized.items() if pattern_norm in name]
+        if matches:
+            # Prefer the newest dated filename if multiple versions exist.
+            return sorted(matches, key=lambda path: path.name)[-1]
+
+    if required:
+        raise FileNotFoundError(
+            "Could not find raw Senior file matching any of: "
+            + ", ".join(patterns)
+        )
     return None
 
 
-def find_raw_acs_file(table_id: str) -> Path:
-    table_id_lower = table_id.lower()
-    matches = []
-    for raw_dir in RAW_DIR_CANDIDATES:
-        if not raw_dir.exists():
-            continue
-        for path in raw_dir.rglob("*"):
-            if not path.is_file() or path.suffix.lower() != ".csv":
-                continue
-            if table_id_lower in path.name.lower():
-                matches.append(path)
-    if not matches:
-        searched = "\n".join(str(path) for path in RAW_DIR_CANDIDATES)
-        raise FileNotFoundError(f"Missing required ACS {table_id} CSV. Searched under:\n{searched}")
-    return sorted(matches, key=lambda path: ("mapping" in path.name.lower(), "metadata" in path.name.lower(), len(path.name), path.name.lower()))[0]
+def as_numeric(frame, columns):
+    for column in columns:
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    return frame
 
 
-def normalize_geoid(value) -> str | None:
+def percent(numerator, denominator):
+    denominator = denominator.replace(0, np.nan)
+    return numerator.div(denominator).mul(100)
+
+
+def standardize_tract_to_geoid(value):
+    """Convert tract values like 201, 2.01, or 00201 to NYC 11-char GEOID."""
     if pd.isna(value):
-        return None
-    digits = re.sub(r"\D", "", str(value).strip())
-    if not digits:
-        return None
-    return digits[-11:].zfill(11)
+        return pd.NA
+
+    text = str(value).strip().replace(".0", "")
+    text = re.sub(r"[^0-9]", "", text)
+
+    if not text:
+        return pd.NA
+
+    # Already a GEOID.
+    if len(text) == 11 and text.startswith("36061"):
+        return text
+
+    # ACS/R memo tract codes are usually 201, 600, 1001, 2902, etc.
+    return "36061" + text.zfill(6)
 
 
-def make_geoid(df: pd.DataFrame) -> pd.Series:
-    geoid_col = find_column(df, ["GEOID", "GEO_ID", "geoid", "GEOID20"])
-    if geoid_col:
-        return df[geoid_col].map(normalize_geoid)
-
-    lower_lookup = {str(col).lower(): col for col in df.columns}
-    if {"state", "county", "tract"}.issubset(lower_lookup):
-        state = df[lower_lookup["state"]].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(2)
-        county = df[lower_lookup["county"]].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(3)
-        tract = df[lower_lookup["tract"]].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(6)
-        return state + county + tract
-
-    raise KeyError(f"Could not create GEOID from columns: {list(df.columns)}")
-
-
-def safe_div(num: pd.Series, den: pd.Series) -> pd.Series:
-    num = pd.to_numeric(num, errors="coerce")
-    den = pd.to_numeric(den, errors="coerce")
-    return (num / den).where(den.notna() & (den != 0))
-
-
-def pct(num: pd.Series, den: pd.Series) -> pd.Series:
-    return safe_div(num, den) * 100
+def attach_geometry_and_centroids(frame, cb3_tract_geometry):
+    result = frame.copy()
+    result = add_polygon_centroids(
+        result,
+        cb3_tract_geometry,
+        id_column="GEOID",
+        lat_col="tract_centroid_latitude",
+        lon_col="tract_centroid_longitude",
+        validate="one_to_one",
+    )
+    result = result.merge(
+        cb3_tract_geometry.assign(
+            geometry_wkt=cb3_tract_geometry.geometry.to_wkt()
+        )[["GEOID", "geometry_wkt"]],
+        on="GEOID",
+        how="left",
+        validate="one_to_one",
+    )
+    return result
 
 
-def read_acs(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        raise FileNotFoundError(f"Missing required ACS file: {path}")
-    df = pd.read_csv(path, dtype=str, low_memory=False)
-    df["GEOID"] = make_geoid(df)
-    id_cols = {column for column in df.columns if column in ID_COLUMNS}
-    id_cols.add("GEOID")
-    for column in df.columns:
-        if column not in id_cols:
-            df[column] = pd.to_numeric(df[column], errors="coerce")
-    df = clean_census_values(df)
-    df = df.loc[df["GEOID"].notna()].copy()
-    df["GEOID"] = df["GEOID"].astype(str).str.zfill(11)
-    return df
+def build_tract_base(tracts, cb3_tract_geometry):
+    base = tracts[["GEOID", "tract", "tract_label", "nta_code", "nta_name", "cdta_code", "cdta_name"]].copy()
+    return attach_geometry_and_centroids(base, cb3_tract_geometry)
 
 
-def select_existing_columns(frame: pd.DataFrame, candidates: list[str]) -> list[str]:
-    return [column for column in candidates if column in frame.columns]
+def build_senior_lep_and_population(CB3_TRACT_CODES, log_lines):
+    path = resolve_file(["acs_5yr_2024_B16004", "B16004"])
+    _log(log_lines, f"Reading senior LEP / senior population source: {path.relative_to(PROJECT_DIR)}")
+
+    frame = clean_census_values(pd.read_csv(path, low_memory=False))
+    frame = frame.query("state == 36 and county == 61").copy()
+    frame["tract"] = pd.to_numeric(frame["tract"], errors="coerce").astype("Int64")
+    frame = frame[frame["tract"].isin(CB3_TRACT_CODES)].copy()
+    frame = add_acs_geoid(frame)
+
+    needed = ["B16004_001E", "B16004_046E"] + SENIOR_LEP_COLUMNS
+    frame = as_numeric(frame, needed)
+
+    # If a source is missing one of the LEP components, treat it as zero and
+    # log it, rather than failing the whole domain.
+    for column in SENIOR_LEP_COLUMNS:
+        if column not in frame.columns:
+            _log(log_lines, f"Warning: missing {column}; senior LEP component set to 0.")
+            frame[column] = 0
+
+    result = frame[["GEOID"]].copy()
+    result["senior_population_65plus"] = frame.get("B16004_046E")
+    result["senior_population_share"] = percent(
+        result["senior_population_65plus"],
+        frame.get("B16004_001E"),
+    )
+    result["senior_lep_count_65plus"] = frame[SENIOR_LEP_COLUMNS].sum(axis=1, min_count=1)
+    result["senior_lep_rate_65plus"] = percent(
+        result["senior_lep_count_65plus"],
+        result["senior_population_65plus"],
+    )
+
+    for language_key, spec in SENIOR_LEP_LANGUAGE_SPECS.items():
+        count_col = f"{language_key}_senior_lep_count_65plus"
+        rate_col = f"{language_key}_senior_lep_rate_65plus"
+        result[count_col] = frame[spec["columns"]].sum(axis=1, min_count=1)
+        result[rate_col] = percent(
+            result[count_col],
+            result["senior_population_65plus"],
+        )
+
+    return result
 
 
-def build_b16001_metrics() -> pd.DataFrame:
-    b16001_path = find_raw_acs_file("B16001")
-    print(f"Using B16001 person-level language file: {b16001_path}")
-    b16001 = read_acs(b16001_path)
-    total_col = find_column(b16001, ["B16001_001E"])
-    if total_col is None:
-        raise KeyError(f"B16001 total population age 5+ column not found in {b16001_path.name}.")
+def build_senior_poverty_by_race(CB3_TRACT_CODES, log_lines):
+    path = resolve_file(["acs_5yr_2024_B17020", "B17020"])
+    _log(log_lines, f"Reading senior poverty-by-race source: {path.relative_to(PROJECT_DIR)}")
 
-    output = b16001[["GEOID"]].drop_duplicates().copy()
-    output["b16001_population_age_5_plus"] = pd.to_numeric(b16001[total_col], errors="coerce")
+    frame = clean_census_values(pd.read_csv(path, low_memory=False))
+    frame = frame.query("state == 36 and county == 61").copy()
+    frame["tract"] = pd.to_numeric(frame["tract"], errors="coerce").astype("Int64")
+    frame = frame[frame["tract"].isin(CB3_TRACT_CODES)].copy()
+    frame = add_acs_geoid(frame)
 
-    for group_name, columns in B16001_LANGUAGE_GROUPS.items():
-        speaker_col = find_column(b16001, [columns["speaker_col"]])
-        very_well_col = find_column(b16001, [columns["very_well_col"]])
-        lep_col = find_column(b16001, [columns["lep_col"]])
-        if speaker_col is None or lep_col is None:
-            raise KeyError(f"Missing B16001 columns for {group_name}: {columns}")
+    result = frame[["GEOID"]].copy()
 
-        output[f"{group_name}_speaker_population_age_5_plus"] = pd.to_numeric(b16001[speaker_col], errors="coerce")
-        output[f"{group_name}_limited_english_population_age_5_plus"] = pd.to_numeric(b16001[lep_col], errors="coerce")
-        if very_well_col:
-            output[f"{group_name}_speaks_english_very_well_population_age_5_plus"] = pd.to_numeric(b16001[very_well_col], errors="coerce")
-        output[f"{group_name}_limited_english_person_share"] = pct(output[f"{group_name}_limited_english_population_age_5_plus"], output["b16001_population_age_5_plus"])
-        output[f"{group_name}_limited_english_within_speakers_share"] = pct(output[f"{group_name}_limited_english_population_age_5_plus"], output[f"{group_name}_speaker_population_age_5_plus"])
+    for race, letter in RACE_TABLE_LETTERS.items():
+        below_cols = [f"B17020{letter}_{code}E" for code in POVERTY_BELOW_CODES]
+        total_cols = below_cols + [f"B17020{letter}_{code}E" for code in POVERTY_ABOVE_CODES]
 
-    output["other_speaker_population_age_5_plus"] = output[[f"{g}_speaker_population_age_5_plus" for g in OTHER_LANGUAGE_COMPONENTS]].sum(axis=1, min_count=1)
-    output["other_limited_english_population_age_5_plus"] = output[[f"{g}_limited_english_population_age_5_plus" for g in OTHER_LANGUAGE_COMPONENTS]].sum(axis=1, min_count=1)
-    output["other_limited_english_person_share"] = pct(output["other_limited_english_population_age_5_plus"], output["b16001_population_age_5_plus"])
-    output["other_limited_english_within_speakers_share"] = pct(output["other_limited_english_population_age_5_plus"], output["other_speaker_population_age_5_plus"])
+        for column in total_cols:
+            if column not in frame.columns:
+                frame[column] = np.nan
+                _log(log_lines, f"Warning: missing {column}; poverty component set to NA.")
+
+        below = frame[below_cols].sum(axis=1, min_count=1)
+        total = frame[total_cols].sum(axis=1, min_count=1)
+
+        result[f"{race}_senior_poverty_below_60plus"] = below
+        result[f"{race}_senior_population_60plus_poverty_universe"] = total
+        result[f"{race}_senior_poverty_rate_60plus"] = percent(below, total)
+
+    return result
+
+
+def parse_walkup_from_clean_tract_rates(log_lines):
+    """Fallback parser for Kailey's tract-rates CSV, whose geometry column is malformed.
+
+    The raw memo source for walk-ups is MapPLUTO + HPD BIS elevator records.
+    Those files were not among the uploaded raw files, so this parser only
+    recovers the already-created tract-level walk-up/elevator values if
+    SENIOR_DOMAIN_senior_tract_rates.csv is present.
+    """
+    path = resolve_file(["SENIOR_DOMAIN_senior_tract_rates"], required=False)
+    if path is None:
+        _log(log_lines, "Walk-up fallback not available: SENIOR_DOMAIN_senior_tract_rates.csv not found.")
+        return pd.DataFrame(columns=[
+            "GEOID",
+            "total_mltfam_bldgs_3plus",
+            "mltfam_bldgs_with_elevator",
+            "mltfam_elevator_rate",
+            "mltfam_walkup_rate",
+        ])
+
+    _log(log_lines, f"Reading walk-up/elevator fallback source: {path.relative_to(PROJECT_DIR)}")
+
+    lines = path.read_text(errors="replace").splitlines()
+    if not lines:
+        return pd.DataFrame()
+
+    header = next(csv.reader([lines[0]]))
+    keep_cols = [
+        "tract",
+        "total_mltfam_bldgs_3plus",
+        "mltfam_bldgs_with_elevator",
+        "mltfam_elevator_rate",
+    ]
+
+    rows = []
+    for line in lines[1:]:
+        if not re.match(r'^"?[0-9]', line.strip()):
+            continue
+
+        prefix = line.split(",c(", 1)[0]
+        try:
+            values = next(csv.reader([prefix]))
+        except Exception:
+            continue
+
+        if len(values) < 16:
+            continue
+
+        row = dict(zip(header[:len(values)], values))
+        if not row.get("tract"):
+            continue
+
+        rows.append({column: row.get(column) for column in keep_cols})
+
+    frame = pd.DataFrame(rows)
+    if frame.empty:
+        _log(log_lines, "Warning: no walk-up/elevator rows could be recovered from fallback tract file.")
+        return frame
+
+    frame["GEOID"] = frame["tract"].map(standardize_tract_to_geoid)
+    frame = as_numeric(
+        frame,
+        ["total_mltfam_bldgs_3plus", "mltfam_bldgs_with_elevator", "mltfam_elevator_rate"],
+    )
+    frame["mltfam_walkup_rate"] = (1 - frame["mltfam_elevator_rate"]).mul(100)
+    frame["mltfam_elevator_rate"] = frame["mltfam_elevator_rate"].mul(100)
+
+    return frame[[
+        "GEOID",
+        "total_mltfam_bldgs_3plus",
+        "mltfam_bldgs_with_elevator",
+        "mltfam_elevator_rate",
+        "mltfam_walkup_rate",
+    ]].drop_duplicates("GEOID")
+
+
+def build_facilities(cb3_tract_geometry, CB3_TRACT_CODES, log_lines):
+    path = resolve_file([
+        "List_of_NYC_Aging_Providers_with_Sites_Open_to_the_Public",
+        "aging_providers",
+        "senior_facilities",
+    ])
+    _log(log_lines, f"Reading senior service facilities source: {path.relative_to(PROJECT_DIR)}")
+
+    frame = pd.read_csv(path, low_memory=False)
+    frame.columns = [column.strip() for column in frame.columns]
+
+    # Support both raw NYC Aging names and Kailey/R cleaned names.
+    provider_col = "Provider Type" if "Provider Type" in frame.columns else "Provider.Type"
+    cd_col = "Community District" if "Community District" in frame.columns else "Community.District"
+    lat_col = "Latitude"
+    lon_col = "Longitude"
+
+    frame = frame[
+        frame[provider_col].isin([
+            "Older Adult Center",
+            "Naturally Occurring Retirement Community (NORC)",
+        ])
+    ].copy()
+
+    frame[cd_col] = frame[cd_col].astype(str).str.replace(r"\.0$", "", regex=True)
+    frame = frame[frame[cd_col].eq("103")].copy()
+
+    frame["latitude"] = pd.to_numeric(frame[lat_col], errors="coerce")
+    frame["longitude"] = pd.to_numeric(frame[lon_col], errors="coerce")
+    frame = frame.dropna(subset=["latitude", "longitude"]).copy()
+
+    frame["facility_type"] = np.where(
+        frame[provider_col].eq("Older Adult Center"),
+        "Older Adult Center",
+        "NORC",
+    )
+
+    name_col = "Site Name" if "Site Name" in frame.columns else "Site.Name"
+    address_col = "Site Address" if "Site Address" in frame.columns else "Site.Address"
+    frame["facility_name"] = frame[name_col].astype(str)
+    frame["facility_address"] = frame[address_col].astype(str) if address_col in frame.columns else ""
+
+    frame["GEOID"] = assign_points_to_cb3_tract(
+        frame,
+        longitude_column="longitude",
+        latitude_column="latitude",
+        cb3_tract_geometry=cb3_tract_geometry,
+        CB3_TRACT_CODES=CB3_TRACT_CODES,
+        source_tract_column=None,
+    )
+    frame = frame[frame["GEOID"].notna()].copy()
+
+    output = frame[[
+        "facility_name",
+        "facility_type",
+        "facility_address",
+        "latitude",
+        "longitude",
+        "GEOID",
+    ]].copy()
+
+    _log(log_lines, f"Senior facilities retained in CB3: {len(output)}")
     return output
 
 
-def build_c16002_context() -> pd.DataFrame:
-    try:
-        c16002_path = find_raw_acs_file("C16002")
-    except FileNotFoundError:
-        print("Warning: C16002 not found. lep_household_share will be blank.")
-        return pd.DataFrame(columns=["GEOID", "households_language_universe", "lep_households", "lep_household_share"])
+def choose_crashes_source(log_lines):
+    matches = []
+    for pattern in ["Motor_Vehicle_Collisions_-_Crashes", "Motor Vehicle Collisions Crashes"]:
+        try:
+            path = resolve_file([pattern], required=False)
+        except Exception:
+            path = None
+        if path is not None:
+            matches.append(path)
 
-    print(f"Using C16002 household LEP context file: {c16002_path}")
-    c16002 = read_acs(c16002_path)
-    total_col = find_column(c16002, ["C16002_001E"])
-    limited_cols = [find_column(c16002, [col]) for col in ["C16002_004E", "C16002_007E", "C16002_010E", "C16002_013E"]]
-    limited_cols = [column for column in limited_cols if column is not None]
-    if total_col is None or not limited_cols:
-        print("Warning: C16002 columns not recognized. lep_household_share will be blank.")
-        return pd.DataFrame(columns=["GEOID", "households_language_universe", "lep_households", "lep_household_share"])
+    # Include all crash files matching normalized phrase, then prefer latest filename.
+    if RAW.exists():
+        for path in RAW.iterdir():
+            if path.is_file() and "motor_vehicle_collisions_crashes" in _normalise_name(path.name):
+                matches.append(path)
 
-    output = c16002[["GEOID"]].drop_duplicates().copy()
-    output["households_language_universe"] = pd.to_numeric(c16002[total_col], errors="coerce")
-    output["lep_households"] = c16002[limited_cols].apply(pd.to_numeric, errors="coerce").sum(axis=1, min_count=1)
-    output["lep_household_share"] = pct(output["lep_households"], output["households_language_universe"])
-    return output
+    matches = sorted(set(matches), key=lambda path: path.name)
+    if not matches:
+        raise FileNotFoundError("Missing raw Vision Zero crashes file.")
+
+    selected = matches[-1]
+    _log(log_lines, f"Reading Vision Zero crashes source: {selected.relative_to(PROJECT_DIR)}")
+    return selected
 
 
-def load_optional_baseline() -> pd.DataFrame:
-    for path in BASELINE_CANDIDATES:
-        if path.exists():
-            print(f"Using demographic baseline: {path}")
-            baseline = pd.read_csv(path, dtype={"GEOID": str}, low_memory=False)
-            baseline["GEOID"] = baseline["GEOID"].map(normalize_geoid)
-            return baseline.dropna(subset=["GEOID"]).drop_duplicates("GEOID")
-    print("Warning: no demographic baseline file found. Only language-created context columns will be available.")
+def build_senior_pedestrian_crashes(cb3_tract_geometry, CB3_TRACT_CODES, log_lines):
+    crashes_path = choose_crashes_source(log_lines)
+    persons_path = resolve_file(["Motor_Vehicle_Collisions_-_Person", "Motor Vehicle Collisions Person"])
+    _log(log_lines, f"Reading Vision Zero person source: {persons_path.relative_to(PROJECT_DIR)}")
+
+    person_usecols = [
+        "COLLISION_ID",
+        "CRASH_DATE",
+        "CRASH_TIME",
+        "PERSON_TYPE",
+        "PERSON_INJURY",
+        "PERSON_AGE",
+        "PED_LOCATION",
+        "PED_ACTION",
+        "COMPLAINT",
+        "PED_ROLE",
+        "PERSON_SEX",
+    ]
+    persons = pd.read_csv(persons_path, usecols=lambda c: c in person_usecols, low_memory=False)
+    persons["PERSON_AGE"] = pd.to_numeric(persons["PERSON_AGE"], errors="coerce")
+    senior_peds = persons[
+        persons["PERSON_TYPE"].eq("Pedestrian")
+        & persons["PERSON_AGE"].ge(65)
+    ].copy()
+
+    if senior_peds.empty:
+        _log(log_lines, "Warning: no senior pedestrian person records found.")
+        return pd.DataFrame(), pd.DataFrame()
+
+    crash_usecols = [
+        "COLLISION_ID",
+        "CRASH DATE",
+        "CRASH TIME",
+        "BOROUGH",
+        "ZIP CODE",
+        "LATITUDE",
+        "LONGITUDE",
+        "ON STREET NAME",
+        "CROSS STREET NAME",
+        "OFF STREET NAME",
+        "NUMBER OF PEDESTRIANS INJURED",
+        "NUMBER OF PEDESTRIANS KILLED",
+    ]
+    crashes = pd.read_csv(crashes_path, usecols=lambda c: c in crash_usecols, low_memory=False)
+
+    crashes["CRASH DATE"] = pd.to_datetime(crashes["CRASH DATE"], errors="coerce")
+    crashes["LATITUDE"] = pd.to_numeric(crashes["LATITUDE"], errors="coerce")
+    crashes["LONGITUDE"] = pd.to_numeric(crashes["LONGITUDE"], errors="coerce")
+    crashes = crashes[
+        crashes["CRASH DATE"].between(pd.Timestamp("2024-01-01"), pd.Timestamp("2025-12-31"))
+        & crashes["LATITUDE"].notna()
+        & crashes["LONGITUDE"].notna()
+    ].copy()
+
+    joined = senior_peds.merge(crashes, on="COLLISION_ID", how="inner", suffixes=("_person", "_crash"))
+
+    if joined.empty:
+        _log(log_lines, "Warning: senior pedestrian records did not match 2024-2025 crash rows.")
+        return pd.DataFrame(), pd.DataFrame()
+
+    joined["GEOID"] = assign_points_to_cb3_tract(
+        joined,
+        longitude_column="LONGITUDE",
+        latitude_column="LATITUDE",
+        cb3_tract_geometry=cb3_tract_geometry,
+        CB3_TRACT_CODES=CB3_TRACT_CODES,
+        source_tract_column=None,
+    )
+    joined = joined[joined["GEOID"].notna()].copy()
+
+    joined["fatality"] = joined["PERSON_INJURY"].astype(str).str.lower().eq("killed")
+    joined["incident_type"] = np.where(joined["fatality"], "Senior pedestrian fatality", "Senior pedestrian injury/incident")
+    joined["crash_date"] = joined["CRASH DATE"].dt.date.astype(str)
+    joined["latitude"] = joined["LATITUDE"]
+    joined["longitude"] = joined["LONGITUDE"]
+    joined["intersection"] = (
+        joined.get("ON STREET NAME", "").fillna("").astype(str).str.strip()
+        + " / "
+        + joined.get("CROSS STREET NAME", "").fillna("").astype(str).str.strip()
+    )
+    joined["intersection"] = joined["intersection"].str.replace(r"^ / | / $", "", regex=True)
+    joined.loc[joined["intersection"].eq(""), "intersection"] = joined.get("OFF STREET NAME", "").fillna("Unknown location")
+
+    crash_output = joined[[
+        "COLLISION_ID",
+        "crash_date",
+        "CRASH_TIME",
+        "PERSON_AGE",
+        "PERSON_INJURY",
+        "fatality",
+        "incident_type",
+        "intersection",
+        "latitude",
+        "longitude",
+        "GEOID",
+    ]].copy()
+
+    top = (
+        crash_output
+        .groupby("intersection", dropna=False)
+        .agg(
+            senior_pedestrian_incidents=("COLLISION_ID", "count"),
+            senior_pedestrian_fatalities=("fatality", "sum"),
+            latitude=("latitude", "mean"),
+            longitude=("longitude", "mean"),
+        )
+        .reset_index()
+        .sort_values(
+            ["senior_pedestrian_incidents", "senior_pedestrian_fatalities"],
+            ascending=False,
+        )
+        .head(5)
+        .copy()
+    )
+    if not top.empty:
+        top["point_type"] = "Top senior pedestrian crash intersection"
+        top["label"] = (
+            top["intersection"].astype(str)
+            + " — "
+            + top["senior_pedestrian_incidents"].astype(int).astype(str)
+            + " senior pedestrian incidents"
+        )
+
+    _log(
+        log_lines,
+        "Senior pedestrian crashes retained in CB3, 2024-2025: "
+        f"{len(crash_output)}; fatalities: {int(crash_output['fatality'].sum()) if not crash_output.empty else 0}",
+    )
+    return crash_output, top
+
+
+
+def load_demographic_context(log_lines):
+    """Load shared demographic context columns for map backdrop layers.
+
+    Senior-domain raw files create senior-specific metrics. The broader map
+    backdrop layers used across Health/Economic-Food/Language usually come
+    from a shared tract baseline or another domain clean output. This function
+    adds those columns to data/clean/senior.csv when a shared clean source is
+    already available, without making maps.qmd read or merge extra files.
+    """
+    for path in DEMOGRAPHIC_SOURCE_CANDIDATES:
+        if not path.exists():
+            continue
+
+        try:
+            frame = pd.read_csv(path, dtype={"GEOID": str}, low_memory=False)
+        except Exception as exc:
+            _log(log_lines, f"Warning: could not read demographic source {path.relative_to(PROJECT_DIR)}: {exc}")
+            continue
+
+        if "GEOID" not in frame.columns:
+            continue
+
+        frame["GEOID"] = frame["GEOID"].astype(str).str.zfill(11)
+        available = [column for column in DEMOGRAPHIC_COLUMNS if column in frame.columns]
+        if not available:
+            continue
+
+        context = frame[["GEOID"] + available].drop_duplicates("GEOID").copy()
+        for column in available:
+            context[column] = pd.to_numeric(context[column], errors="coerce")
+
+        _log(
+            log_lines,
+            "Loaded shared demographic map backdrop source: "
+            f"{path.relative_to(PROJECT_DIR)} with columns: {', '.join(available)}",
+        )
+        return context
+
+    _log(
+        log_lines,
+        "Warning: no shared demographic backdrop source found. Senior maps will "
+        "still use senior_population_share as their default backdrop, but broader "
+        "demographic layers such as income, race/ethnicity, poverty, and LEP will be unavailable.",
+    )
     return pd.DataFrame(columns=["GEOID"])
 
+def main():
+    log_lines = []
+    CLEAN.mkdir(parents=True, exist_ok=True)
 
-def add_geometry_and_centroids(clean: pd.DataFrame) -> pd.DataFrame:
-    _, cb3_tract_geometry, _, _ = load_cb3_tract_universe(PROJECT_DIR)
-    geometry = cb3_tract_geometry[["GEOID", "geometry"]].copy()
-    geometry["GEOID"] = geometry["GEOID"].map(normalize_geoid)
-    geometry = geometry.dropna(subset=["GEOID"]).drop_duplicates("GEOID")
-    geometry = gpd.GeoDataFrame(geometry, geometry="geometry", crs=cb3_tract_geometry.crs).to_crs("EPSG:4326")
-    centroids = geometry.to_crs("EPSG:2263").copy()
-    centroids["geometry"] = centroids.geometry.representative_point()
-    centroids = centroids.to_crs("EPSG:4326")
-    geometry["tract_centroid_latitude"] = centroids.geometry.y
-    geometry["tract_centroid_longitude"] = centroids.geometry.x
-    geometry["geometry_wkt"] = geometry.geometry.to_wkt()
-    return clean.merge(pd.DataFrame(geometry.drop(columns="geometry")), on="GEOID", how="left", validate="one_to_one")
+    _log(log_lines, f"Project directory: {PROJECT_DIR}")
+    tracts, cb3_tract_geometry, CB3_TRACT_CODES, _ = load_cb3_tract_universe(PROJECT_DIR)
 
+    senior = build_tract_base(tracts, cb3_tract_geometry)
 
-def main() -> None:
-    CLEAN_DIR.mkdir(parents=True, exist_ok=True)
-    tracts, _, _, _ = load_cb3_tract_universe(PROJECT_DIR)
-    base_columns = ["GEOID", "tract_label", "tract_name", "nta_code", "nta_name", "cdta_code", "cdta_name"]
-    clean = tracts[select_existing_columns(tracts, base_columns)].copy()
-    clean["GEOID"] = clean["GEOID"].map(normalize_geoid)
+    senior_population = build_senior_lep_and_population(CB3_TRACT_CODES, log_lines)
+    senior_poverty = build_senior_poverty_by_race(CB3_TRACT_CODES, log_lines)
+    walkup = parse_walkup_from_clean_tract_rates(log_lines)
+    demographic_context = load_demographic_context(log_lines)
 
-    clean = clean.merge(build_b16001_metrics(), on="GEOID", how="left", validate="one_to_one")
-    clean = clean.merge(build_c16002_context(), on="GEOID", how="left", validate="one_to_one")
+    for frame, name in [
+        (senior_population, "senior population / LEP"),
+        (senior_poverty, "senior poverty by race"),
+        (walkup, "walk-up/elevator fallback"),
+        (demographic_context, "shared demographic map backdrop"),
+    ]:
+        if not frame.empty:
+            overlap = [column for column in frame.columns if column != "GEOID" and column in senior.columns]
+            if overlap:
+                frame = frame.drop(columns=overlap)
+                _log(log_lines, f"Skipped duplicate columns from {name}: {', '.join(overlap)}")
+            if len(frame.columns) > 1:
+                senior = senior.merge(frame, on="GEOID", how="left", validate="one_to_one")
+                _log(log_lines, f"Merged {name}: {len(frame)} rows")
+            else:
+                _log(log_lines, f"Skipped {name}: no new columns to merge")
+        else:
+            _log(log_lines, f"Skipped empty {name} table")
 
-    baseline = load_optional_baseline()
-    baseline_columns = [
-        "GEOID", "median_household_income", "age_0_to_19_share", "age_20_to_64_share", "age_65_plus_share",
-        "white_non_hispanic_share", "black_non_hispanic_share", "asian_non_hispanic_share", "hispanic_share", "poverty_rate",
+    facilities = build_facilities(cb3_tract_geometry, CB3_TRACT_CODES, log_lines)
+    crashes, top_intersections = build_senior_pedestrian_crashes(
+        cb3_tract_geometry,
+        CB3_TRACT_CODES,
+        log_lines,
+    )
+
+    senior.to_csv(SENIOR_OUTPUT, index=False)
+    facilities.to_csv(FACILITIES_OUTPUT, index=False)
+    crashes.to_csv(CRASHES_OUTPUT, index=False)
+    top_intersections.to_csv(TOP_INTERSECTIONS_OUTPUT, index=False)
+
+    missing_housing_sources = [
+        "MapPLUTO raw lot file",
+        "HPD BIS elevator inspection records",
+        "Furman SHD senior-targeted unit file",
+        "HPD Local Law 44 senior-targeted affordable unit file",
     ]
-    available_baseline_columns = select_existing_columns(baseline, baseline_columns)
-    if available_baseline_columns != ["GEOID"] and "GEOID" in available_baseline_columns:
-        clean = clean.merge(baseline[available_baseline_columns], on="GEOID", how="left", validate="one_to_one")
+    _log(log_lines, "Note: senior housing unit-location layer is not built because these memo sources are not present:")
+    for item in missing_housing_sources:
+        _log(log_lines, f"  - {item}")
 
-    clean = add_geometry_and_centroids(clean).sort_values("GEOID").reset_index(drop=True)
-    assert len(clean) == 31, f"Expected 31 CB3 tracts, got {len(clean)}"
-    assert clean["GEOID"].is_unique, "GEOID is not unique."
-    assert clean["geometry_wkt"].notna().all(), "Missing geometry_wkt values."
-    clean.to_csv(OUTPUT_PATH, index=False)
+    LOG_OUTPUT.write_text("\n".join(log_lines) + "\n")
 
-    mapped_metrics = ["spanish_limited_english_person_share", "chinese_limited_english_person_share", "other_limited_english_person_share"]
-    log_lines = [
-        "CB3 Language — Build Log", f"Output: {OUTPUT_PATH}", "", "Mapped B16001 person-level metrics:",
-        *[f"- {m}: {clean[m].notna().sum()} tracts with data" for m in mapped_metrics if m in clean.columns],
-        "", "Other language group collapse:", "- Tagalog", "- Korean", "- French/Haitian/Cajun", "- Arabic", "- Russian/Slavic", "- Vietnamese", "",
-        "C16002 household-level metric kept as demographic/context layer:",
-        f"- lep_household_share: {clean['lep_household_share'].notna().sum() if 'lep_household_share' in clean.columns else 0} tracts with data",
-    ]
-    LOG_PATH.write_text("\n".join(log_lines), encoding="utf-8")
-    print(f"Wrote {len(clean)} rows and {len(clean.columns)} columns to {OUTPUT_PATH}")
-    print(f"Wrote build log to {LOG_PATH}")
-    print("\nMapped metrics:")
-    for metric in mapped_metrics:
-        if metric in clean.columns:
-            print(f"  {metric}: {clean[metric].notna().sum()} tracts with data")
+    print("\nWrote Senior clean outputs:")
+    for path in [SENIOR_OUTPUT, FACILITIES_OUTPUT, CRASHES_OUTPUT, TOP_INTERSECTIONS_OUTPUT, LOG_OUTPUT]:
+        print(f"  {path.relative_to(PROJECT_DIR)}")
 
 
 if __name__ == "__main__":

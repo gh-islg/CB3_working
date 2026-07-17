@@ -125,22 +125,13 @@ if not demographic_keys:
 
 demographic_specs = {key: metadata[key] for key in demographic_keys}
 
-# map_utils.add_metric_layer() requires every demographic layer spec to have a dimension.
-# Keep this local to Senior so we do not edit shared metadata used by other domains.
-for key, spec in demographic_specs.items():
-    spec.setdefault("dimension", spec.get("short_label", spec.get("label", key)))
-
-
-
-
-
-service_site_spec = metadata["senior_service_sites"]
-pedestrian_spec = metadata["senior_pedestrian_safety_points"]
-top_intersection_spec = metadata["senior_pedestrian_top_intersections"]
-
-service_category_colors = service_site_spec.get("category_colors", {})
-pedestrian_category_colors = pedestrian_spec.get("category_colors", {})
-top_intersection_category_colors = top_intersection_spec.get("category_colors", {})
+service_category_colors = metadata["senior_service_sites"].get("category_colors", {})
+pedestrian_category_colors = metadata["senior_pedestrian_safety_points"].get(
+    "category_colors", {}
+)
+top_intersection_category_colors = metadata["senior_pedestrian_top_intersections"].get(
+    "category_colors", {}
+)
 
 for label, color_spec in [
     ("senior_service_sites.category_colors", service_category_colors),
@@ -157,25 +148,6 @@ for label, color_spec in [
 ```{python}
 service_output = OUTPUT_DIR / "senior_service_supply.html"
 
-facility_colors = service_category_colors
-
-# Facility categories must match metadata exactly. Without this check,
-# an unregistered category is silently removed by the .isin() filter below.
-facility_types = sorted(
-    facilities["facility_type"].dropna().astype(str).unique()
-)
-unregistered_facility_types = [
-    facility_type
-    for facility_type in facility_types
-    if facility_type not in facility_colors
-]
-if unregistered_facility_types:
-    raise KeyError(
-        "Facility types missing from "
-        "senior_service_sites.category_colors: "
-        + ", ".join(unregistered_facility_types)
-    )
-
 service_map = make_base_map(tracts)
 add_demographic_backdrop_layers(
     service_map,
@@ -185,48 +157,40 @@ add_demographic_backdrop_layers(
 )
 
 facilities_for_map = facilities[
-    facilities["facility_type"].isin(facility_colors)
+    facilities["facility_type"].isin(service_category_colors)
     & facilities["latitude"].notna()
     & facilities["longitude"].notna()
 ].copy()
 
-norc_sites = facilities_for_map[
-    facilities_for_map["facility_type"].eq("NORC")
-].copy()
+service_layers = [
+    ("NORC", "NORCs", 35),
+    ("Older Adult Center", "Older Adult Centers", 105),
+]
 
-older_adult_centers = facilities_for_map[
-    facilities_for_map["facility_type"].eq("Older Adult Center")
-].copy()
+for facility_type, layer_label, legend_offset in service_layers:
+    sites = facilities_for_map[
+        facilities_for_map["facility_type"].eq(facility_type)
+    ].copy()
 
-add_categorical_point_layer(
-    service_map,
-    norc_sites,
-    category_col="facility_type",
-    category_colors={"NORC": facility_colors["NORC"]},
-    name=f"NORCs (n={len(norc_sites)})",
-    lat_col="latitude",
-    lon_col="longitude",
-    tooltip_fields=["facility_name", "facility_address"],
-    tooltip_aliases=["Facility", "Address"],
-    size=15,
-    legend_bottom_offset=35,
-)
+    if sites.empty:
+        print(f"Warning: no {facility_type} locations available.")
+        continue
 
-add_categorical_point_layer(
-    service_map,
-    older_adult_centers,
-    category_col="facility_type",
-    category_colors={
-        "Older Adult Center": facility_colors["Older Adult Center"]
-    },
-    name=f"Older Adult Centers (n={len(older_adult_centers)})",
-    lat_col="latitude",
-    lon_col="longitude",
-    tooltip_fields=["facility_name", "facility_address"],
-    tooltip_aliases=["Facility", "Address"],
-    size=15,
-    legend_bottom_offset=105,
-)
+    add_categorical_point_layer(
+        service_map,
+        sites,
+        category_col="facility_type",
+        category_colors={
+            facility_type: service_category_colors[facility_type]
+        },
+        name=f"{layer_label} (n={len(sites)})",
+        lat_col="latitude",
+        lon_col="longitude",
+        tooltip_fields=["facility_name", "facility_address"],
+        tooltip_aliases=["Facility", "Address"],
+        size=15,
+        legend_bottom_offset=legend_offset,
+    )
 
 add_map_title(
     service_map,
@@ -309,12 +273,11 @@ else:
 
 if not top_intersections.empty:
     top_intersections["point_type"] = "Top senior pedestrian crash intersection"
-    top_colors = top_intersection_category_colors
     add_categorical_point_layer(
         pedestrian_map,
         top_intersections.dropna(subset=["latitude", "longitude"]).copy(),
         category_col="point_type",
-        category_colors=top_colors,
+        category_colors=top_intersection_category_colors,
         name="Top 5 senior pedestrian crash intersections",
         lat_col="latitude",
         lon_col="longitude",
@@ -354,7 +317,6 @@ poverty_metrics = {
         "title": "CB3 Seniors: White non-Hispanic senior poverty",
     },
 }
-
 
 for metric, settings in poverty_metrics.items():
     if metric not in tracts.columns or tracts[metric].notna().sum() == 0:
