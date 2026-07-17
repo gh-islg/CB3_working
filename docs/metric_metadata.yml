@@ -633,6 +633,22 @@ senior_poverty_rate:
   map_classification: quintile
   display_format: percent
 
+lep_household_share:
+  domain: demographics
+  short_label: Limited-English-proficient households
+  dimension: LEP household share
+  label: Limited-English-proficient households
+  description: >
+    Share of households with limited English proficiency.
+  unit: "%"
+  palette: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"]
+  source: ACS 2020-2024 C16002
+  year: 2024
+  geography: Census tract
+  higher_is: neutral
+  map_classification: quintile
+  display_format: percent
+
 # --- Health ---
 
 uninsured_adults_pct:
@@ -778,21 +794,6 @@ food_supply_gap_score_nta:
   filename: food_supply_gap_score.html
 
 # --- Language Access ---
-
-lep_household_share:
-  domain: language-context
-  short_label: LEP household share
-  dimension: LEP household share
-  label: Limited-English-proficient households
-  description: Share of households with limited English proficiency.
-  unit: "%"
-  source: ACS 2020-2024 C16002
-  year: 2024
-  geography: Census tract
-  higher_is: context
-  map_classification: tooltip
-  display_format: percent
-  filename: context_only.html
 
 spanish_limited_english_household_share:
   domain: language
