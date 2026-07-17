@@ -809,6 +809,27 @@ food_supply_gap_food_insecure_pct_nta:
   display_format: percent
   filename: context_only.html
 
+emergency_food_provider_locations:
+  domain: economic-security-food-points
+  short_label: Emergency food providers
+  dimension: Emergency food provider locations
+  label: Emergency food provider locations
+  description: >
+    Emergency food provider locations shown at exact coordinates when those
+    coordinates are available. When the source is reported only by
+    Neighborhood Tabulation Area, the marker is placed at an in-polygon NTA
+    representative point and the tooltip reports the number of providers
+    represented.
+  unit: providers
+  source: NYC emergency food provider locations
+  year: 2026
+  geography: Point location or NTA representative point
+  higher_is: context
+  map_classification: categorical_points
+  display_format: count
+  category_colors:
+    Emergency food provider: "#7a0177"
+
 utility_shutoff_risk_pct:
   domain: economic-security-food
   short_label: Utility shutoff risk

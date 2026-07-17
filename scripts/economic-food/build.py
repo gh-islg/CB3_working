@@ -524,37 +524,402 @@ def build_safety_net_metric(log_lines, base):
     return out
 
 
-def build_provider_points(log_lines):
+def _normalize_join_text(series):
+    """Normalize text values used to join source NTAs to CB3 NTA geography."""
+    return (
+        series.astype("string")
+        .str.strip()
+        .str.casefold()
+        .str.replace(r"\s+", " ", regex=True)
+    )
+
+
+def _build_nta_representative_points(tract_universe, cb3_tract_geometry):
+    """Create one in-polygon representative point for each CB3 NTA."""
+    nta_columns = [
+        column
+        for column in ["nta_code", "nta_name"]
+        if column in tract_universe.columns
+    ]
+    if not nta_columns:
+        raise KeyError(
+            "CB3 tract universe has no nta_code or nta_name column for "
+            "placing NTA-level emergency food providers."
+        )
+
+    attributes = tract_universe[["GEOID"] + nta_columns].copy()
+    attributes["GEOID"] = _normalize_geoid(attributes["GEOID"])
+    attributes = attributes.drop_duplicates("GEOID")
+
+    geometry = cb3_tract_geometry[["GEOID", "geometry"]].copy()
+    geometry["GEOID"] = _normalize_geoid(geometry["GEOID"])
+    geometry = geometry.merge(
+        attributes,
+        on="GEOID",
+        how="left",
+        validate="one_to_one",
+    )
+
+    join_column = "nta_code" if "nta_code" in geometry.columns else "nta_name"
+    geometry["_nta_join"] = _normalize_join_text(geometry[join_column])
+    geometry = geometry.dropna(subset=["_nta_join", "geometry"]).copy()
+
+    nta_geometry = geometry[
+        ["_nta_join"] + nta_columns + ["geometry"]
+    ].dissolve(
+        by="_nta_join",
+        as_index=False,
+        aggfunc="first",
+    )
+
+    projected = nta_geometry.to_crs("EPSG:2263")
+    projected["geometry"] = projected.geometry.representative_point()
+    points = projected.to_crs("EPSG:4326")
+
+    points["latitude"] = points.geometry.y
+    points["longitude"] = points.geometry.x
+
+    return points[
+        ["_nta_join"] + nta_columns + ["latitude", "longitude"]
+    ].copy()
+
+
+def _choose_nta_join(providers, nta_points):
+    """Choose the source NTA column with the highest match to CB3 geography."""
+    source_candidates = [
+        column
+        for column in [
+            "nta_code",
+            "ntacode",
+            "nta2020",
+            "nta_name",
+            "ntaname",
+            "nta",
+            "neighborhood",
+            "neighborhood_tabulation_area",
+            "neighborhood_tabulation_area_nta_name",
+        ]
+        if column in providers.columns
+    ]
+
+    target_candidates = [
+        column
+        for column in ["nta_code", "nta_name"]
+        if column in nta_points.columns
+    ]
+
+    best = None
+    for source_column in source_candidates:
+        source_values = _normalize_join_text(providers[source_column])
+        for target_column in target_candidates:
+            target_values = set(
+                _normalize_join_text(nta_points[target_column])
+                .dropna()
+                .tolist()
+            )
+            match_count = int(source_values.isin(target_values).sum())
+            candidate = (match_count, source_column, target_column)
+            if best is None or candidate[0] > best[0]:
+                best = candidate
+
+    if best is None or best[0] == 0:
+        return None, None
+
+    _, source_column, target_column = best
+    return source_column, target_column
+
+
+def build_provider_points(log_lines, tract_universe, cb3_tract_geometry):
+    """Create map-ready emergency food provider points.
+
+    Exact source coordinates are retained when available. When the provider
+    source is only available at NTA level, one representative point is placed
+    inside each matched NTA and the provider count is retained in the tooltip.
+    """
     path = _find_existing_file(PROVIDER_FILE, required=False)
     if path is None:
-        _log(log_lines, f"Skipping provider point file: missing {PROVIDER_FILE}")
+        if PROVIDER_OUTPUT_PATH.exists():
+            PROVIDER_OUTPUT_PATH.unlink()
+            _log(
+                log_lines,
+                "Removed stale provider output because the raw provider "
+                f"source is missing: {PROVIDER_OUTPUT_PATH}",
+            )
+
+        _log(
+            log_lines,
+            "Emergency food provider layer not built: "
+            f"missing {PROVIDER_FILE}.",
+        )
         return
 
     _log(log_lines, f"Using provider source: {path}")
+
     providers = _standardize_columns(_read_csv(path))
+    if providers.empty:
+        raise ValueError(f"Provider source is empty: {path}")
 
     lat_col = _find_col(providers, ["latitude", "lat"])
     lon_col = _find_col(providers, ["longitude", "lon", "lng", "long"])
 
-    if not lat_col or not lon_col:
-        _log(log_lines, "Skipping provider point file: missing latitude/longitude columns.")
-        return
+    name_col = _find_col(
+        providers,
+        ["provider_name", "name", "organization", "agency", "program_name"],
+    )
+    address_col = _find_col(
+        providers,
+        ["address", "street_address", "location"],
+    )
+    subtype_col = _find_col(
+        providers,
+        ["provider_type", "type", "service_type", "program_type"],
+    )
+    count_col = (
+        _find_col(
+            providers,
+            [
+                "provider_count",
+                "number_of_providers",
+                "total_providers",
+                "emergency_food_provider_count",
+                "number_of_emergency_food_providers",
+                "efp_count",
+                "total_efp",
+                "count",
+            ],
+        )
+        or _find_col_contains(
+            providers,
+            ["provider"],
+            ["count", "number", "total"],
+        )
+    )
 
-    name_col = _find_col(providers, ["provider_name", "name", "organization", "agency"])
-    address_col = _find_col(providers, ["address", "street_address", "location"])
-    type_col = _find_col(providers, ["provider_type", "type", "service_type"])
+    if count_col:
+        providers["_provider_count"] = _to_numeric(
+            providers[count_col]
+        ).fillna(0)
+    else:
+        providers["_provider_count"] = 1
 
-    output = pd.DataFrame()
-    output["provider_name"] = providers[name_col] if name_col else "Emergency food provider"
-    output["address"] = providers[address_col] if address_col else np.nan
-    output["provider_type"] = providers[type_col] if type_col else np.nan
-    output["latitude"] = _to_numeric(providers[lat_col])
-    output["longitude"] = _to_numeric(providers[lon_col])
-    output = output.dropna(subset=["latitude", "longitude"])
+    output_parts = []
+
+    if lat_col and lon_col:
+        providers["_latitude"] = _to_numeric(providers[lat_col])
+        providers["_longitude"] = _to_numeric(providers[lon_col])
+
+        exact_mask = (
+            providers["_latitude"].between(40.4, 41.1)
+            & providers["_longitude"].between(-74.4, -73.5)
+        )
+
+        exact = providers.loc[exact_mask].copy()
+        if not exact.empty:
+            exact_output = pd.DataFrame(
+                {
+                    "provider_name": (
+                        exact[name_col]
+                        if name_col
+                        else "Emergency food provider"
+                    ),
+                    "address": (
+                        exact[address_col]
+                        if address_col
+                        else ""
+                    ),
+                    "provider_subtype": (
+                        exact[subtype_col]
+                        if subtype_col
+                        else ""
+                    ),
+                    "provider_count": exact["_provider_count"],
+                    "provider_type": "Emergency food provider",
+                    "location_level": "Exact provider coordinates",
+                    "latitude": exact["_latitude"],
+                    "longitude": exact["_longitude"],
+                }
+            )
+
+            source_nta_col = _find_col(
+                exact,
+                [
+                    "nta_name",
+                    "ntaname",
+                    "nta",
+                    "neighborhood",
+                    "neighborhood_tabulation_area",
+                    "neighborhood_tabulation_area_nta_name",
+                ],
+            )
+            if source_nta_col:
+                exact_output["nta_name"] = exact[source_nta_col]
+
+            output_parts.append(exact_output)
+            _log(
+                log_lines,
+                "Retained exact emergency food provider points: "
+                f"{len(exact_output)}",
+            )
+    else:
+        exact_mask = pd.Series(False, index=providers.index)
+
+    missing_coordinate_rows = providers.loc[~exact_mask].copy()
+    if not missing_coordinate_rows.empty:
+        nta_points = _build_nta_representative_points(
+            tract_universe,
+            cb3_tract_geometry,
+        )
+        source_nta_col, target_nta_col = _choose_nta_join(
+            missing_coordinate_rows,
+            nta_points,
+        )
+
+        if source_nta_col is None:
+            raise ValueError(
+                "Emergency food provider rows do not have usable coordinates "
+                "and no NTA field could be matched to the CB3 tract universe. "
+                f"Columns found: {providers.columns.tolist()}"
+            )
+
+        missing_coordinate_rows["_nta_join"] = _normalize_join_text(
+            missing_coordinate_rows[source_nta_col]
+        )
+
+        nta_lookup = nta_points.copy()
+        nta_lookup["_nta_join"] = _normalize_join_text(
+            nta_lookup[target_nta_col]
+        )
+
+        matched = missing_coordinate_rows.merge(
+            nta_lookup.drop_duplicates("_nta_join"),
+            on="_nta_join",
+            how="inner",
+            suffixes=("", "_cb3"),
+        )
+
+        if matched.empty:
+            raise ValueError(
+                "No NTA-level emergency food provider records matched CB3 NTA "
+                "geography."
+            )
+
+        canonical_nta_name = None
+        for candidate in [
+            "nta_name_cb3",
+            "nta_name",
+            source_nta_col,
+        ]:
+            if candidate in matched.columns:
+                canonical_nta_name = candidate
+                break
+
+        canonical_nta_code = None
+        for candidate in ["nta_code_cb3", "nta_code"]:
+            if candidate in matched.columns:
+                canonical_nta_code = candidate
+                break
+
+        group_columns = ["_nta_join", "latitude", "longitude"]
+        if canonical_nta_code:
+            group_columns.append(canonical_nta_code)
+        if canonical_nta_name and canonical_nta_name not in group_columns:
+            group_columns.append(canonical_nta_name)
+
+        nta_output = (
+            matched.groupby(group_columns, dropna=False, as_index=False)
+            .agg(provider_count=("_provider_count", "sum"))
+        )
+
+        if canonical_nta_code and canonical_nta_code != "nta_code":
+            nta_output = nta_output.rename(
+                columns={canonical_nta_code: "nta_code"}
+            )
+        if canonical_nta_name and canonical_nta_name != "nta_name":
+            nta_output = nta_output.rename(
+                columns={canonical_nta_name: "nta_name"}
+            )
+        if "nta_name" not in nta_output.columns:
+            nta_output["nta_name"] = nta_output["_nta_join"]
+
+        nta_output["provider_name"] = (
+            "Emergency food providers in "
+            + nta_output["nta_name"].fillna("NTA").astype(str)
+        )
+        nta_output["address"] = ""
+        nta_output["provider_subtype"] = ""
+        nta_output["provider_type"] = "Emergency food provider"
+        nta_output["location_level"] = "NTA representative point"
+
+        output_parts.append(
+            nta_output[
+                [
+                    "provider_name",
+                    "address",
+                    "provider_subtype",
+                    "provider_count",
+                    "provider_type",
+                    "location_level",
+                    "nta_name",
+                    "latitude",
+                    "longitude",
+                ]
+            ]
+        )
+
+        matched_source_values = set(matched["_nta_join"].dropna())
+        all_source_values = set(
+            missing_coordinate_rows["_nta_join"].dropna()
+        )
+        unmatched_count = len(all_source_values - matched_source_values)
+
+        _log(
+            log_lines,
+            "Created NTA representative provider points: "
+            f"{len(nta_output)} NTA markers; "
+            f"{int(nta_output['provider_count'].sum())} providers represented.",
+        )
+        if unmatched_count:
+            _log(
+                log_lines,
+                "Warning: unmatched NTA provider values: "
+                f"{unmatched_count}",
+            )
+
+    if not output_parts:
+        raise ValueError(
+            "No emergency food provider points could be created from the "
+            f"source file: {path}"
+        )
+
+    output = pd.concat(output_parts, ignore_index=True, sort=False)
+    output["provider_name"] = (
+        output["provider_name"]
+        .fillna("Emergency food provider")
+        .astype(str)
+        .str.strip()
+    )
+    output["provider_type"] = "Emergency food provider"
+    output["provider_count"] = (
+        pd.to_numeric(output["provider_count"], errors="coerce")
+        .fillna(1)
+    )
+    output = output.dropna(
+        subset=["latitude", "longitude"]
+    ).copy()
+
+    if output.empty:
+        raise ValueError(
+            "Emergency food provider output has no usable map coordinates."
+        )
 
     output.to_csv(PROVIDER_OUTPUT_PATH, index=False)
-    _log(log_lines, f"Wrote provider points: {PROVIDER_OUTPUT_PATH} ({len(output)} rows)")
 
+    _log(
+        log_lines,
+        f"Wrote provider points: {PROVIDER_OUTPUT_PATH} "
+        f"({len(output)} map markers; "
+        f"{int(output['provider_count'].sum())} providers represented)",
+    )
 
 
 def attach_map_geometry(output, cb3_tract_geometry):
@@ -630,7 +995,11 @@ def main():
     output = build_food_gap_context(log_lines, output)
     output = build_safety_net_metric(log_lines, output)
     output = add_baseline_demographics(log_lines, output)
-    build_provider_points(log_lines)
+    build_provider_points(
+        log_lines,
+        tract_universe,
+        cb3_tract_geometry,
+    )
     output = attach_map_geometry(output, cb3_tract_geometry)
 
     assert len(output) == 31, f"Expected 31 CB3 tracts, got {len(output)}"
