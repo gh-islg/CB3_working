@@ -840,10 +840,8 @@ senior_service_sites:
   display_format: count
   filename: senior_service_supply.html
   category_colors:
-    Senior center: "#1f77b4"
     NORC: "#ff7f0e"
-    Case management: "#2ca02c"
-    Other senior service: "#7f7f7f"
+    Older Adult Center: "#7f7f7f"
 
 senior_pedestrian_safety_points:
   domain: senior

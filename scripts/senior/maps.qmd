@@ -159,6 +159,23 @@ service_output = OUTPUT_DIR / "senior_service_supply.html"
 
 facility_colors = service_category_colors
 
+# Facility categories must match metadata exactly. Without this check,
+# an unregistered category is silently removed by the .isin() filter below.
+facility_types = sorted(
+    facilities["facility_type"].dropna().astype(str).unique()
+)
+unregistered_facility_types = [
+    facility_type
+    for facility_type in facility_types
+    if facility_type not in facility_colors
+]
+if unregistered_facility_types:
+    raise KeyError(
+        "Facility types missing from "
+        "senior_service_sites.category_colors: "
+        + ", ".join(unregistered_facility_types)
+    )
+
 service_map = make_base_map(tracts)
 add_demographic_backdrop_layers(
     service_map,
@@ -173,18 +190,42 @@ facilities_for_map = facilities[
     & facilities["longitude"].notna()
 ].copy()
 
+norc_sites = facilities_for_map[
+    facilities_for_map["facility_type"].eq("NORC")
+].copy()
+
+older_adult_centers = facilities_for_map[
+    facilities_for_map["facility_type"].eq("Older Adult Center")
+].copy()
+
 add_categorical_point_layer(
     service_map,
-    facilities_for_map,
+    norc_sites,
     category_col="facility_type",
-    category_colors=facility_colors,
-    name=f"Senior service sites (n={len(facilities_for_map)})",
+    category_colors={"NORC": facility_colors["NORC"]},
+    name=f"NORCs (n={len(norc_sites)})",
     lat_col="latitude",
     lon_col="longitude",
     tooltip_fields=["facility_name", "facility_address"],
     tooltip_aliases=["Facility", "Address"],
     size=15,
     legend_bottom_offset=35,
+)
+
+add_categorical_point_layer(
+    service_map,
+    older_adult_centers,
+    category_col="facility_type",
+    category_colors={
+        "Older Adult Center": facility_colors["Older Adult Center"]
+    },
+    name=f"Older Adult Centers (n={len(older_adult_centers)})",
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["facility_name", "facility_address"],
+    tooltip_aliases=["Facility", "Address"],
+    size=15,
+    legend_bottom_offset=105,
 )
 
 add_map_title(
