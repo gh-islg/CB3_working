@@ -636,14 +636,14 @@ senior_poverty_rate:
 lep_household_share:
   domain: demographics
   short_label: Limited-English-proficient households
+  dimension: LEP household share
   label: Limited-English-proficient households
   description: >
-    Share of households where no member aged 14 or older speaks English
-    "very well" (limited-English-proficient households).
+    Share of households with limited English proficiency.
   unit: "%"
   palette: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"]
-  source: ACS 5-year estimates, table B16002
-  year: 2023
+  source: ACS 2020-2024 C16002
+  year: 2024
   geography: Census tract
   higher_is: neutral
   map_classification: quintile
@@ -791,35 +791,67 @@ food_supply_gap_score_nta:
   higher_is: worse
   map_classification: tooltip
   display_format: number
-  filename: context_only.html
+  filename: food_supply_gap_score.html
 
-food_supply_gap_food_insecure_pct_nta:
-  domain: economic-security-food-context
-  short_label: NTA food insecure share
-  label: Food insecure percentage by NTA
-  description: >
-    NTA-level food insecure percentage from emergency food supply gap data joined
-    to CB3 tracts by NTA.
-  unit: "%"
-  source: NYC emergency food supply gap data
-  year: 2026
-  geography: NTA joined to census tract
-  higher_is: worse
-  map_classification: tooltip
-  display_format: percent
-  filename: context_only.html
+# --- Language Access ---
 
-utility_shutoff_risk_pct:
-  domain: economic-security-food
-  short_label: Utility shutoff risk
-  label: Utility shutoff risk
-  description: >
-    Estimated prevalence of utility shutoff risk from CDC PLACES.
+spanish_limited_english_household_share:
+  domain: language
+  short_label: Spanish LEP households
+  dimension: Spanish LEP households
+  label: Spanish limited-English-proficient households
+  description: Share of households that speak Spanish and have limited English proficiency.
   unit: "%"
-  source: CDC PLACES
-  year: 2025 release
+  source: ACS 2020-2024 C16002
+  year: 2024
   geography: Census tract
-  higher_is: worse
+  higher_is: context
   map_classification: bubble
   display_format: percent
-  filename: utility_shutoff_risk_by_tract.html
+  filename: language_access_spanish_lep_households.html
+
+other_indo_european_limited_english_household_share:
+  domain: language
+  short_label: Other Indo-European LEP households
+  dimension: Other Indo-European LEP households
+  label: Other Indo-European limited-English-proficient households
+  description: Share of households that speak other Indo-European languages and have limited English proficiency.
+  unit: "%"
+  source: ACS 2020-2024 C16002
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: bubble
+  display_format: percent
+  filename: language_access_other_indo_european_lep_households.html
+
+asian_pacific_limited_english_household_share:
+  domain: language
+  short_label: Asian/Pacific Island LEP households
+  dimension: Asian/Pacific Island LEP households
+  label: Asian/Pacific Island limited-English-proficient households
+  description: Share of households that speak Asian/Pacific Island languages and have limited English proficiency.
+  unit: "%"
+  source: ACS 2020-2024 C16002
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: bubble
+  display_format: percent
+  filename: language_access_asian_pacific_lep_households.html
+
+other_languages_limited_english_household_share:
+  domain: language
+  short_label: Other-language LEP households
+  dimension: Other-language LEP households
+  label: Other-language limited-English-proficient households
+  description: Share of households that speak other languages and have limited English proficiency.
+  unit: "%"
+  source: ACS 2020-2024 C16002
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: bubble
+  display_format: percent
+  filename: language_access_other_languages_lep_households.html
+
