@@ -1,374 +1,203 @@
 ---
-title: "CB3 Economic Security and Food Maps"
 format:
   html:
-    toc: true
-    code-fold: true
-    embed-resources: true
+    self-contained: true
 execute:
-  echo: true
+  echo: false
   warning: false
   message: false
-jupyter: python3
 ---
 
-## Economic Security and Food Maps
-
-This notebook renders four Economic Security and Food topic maps from the
-map-ready clean file:
-
-`data/clean/economic-food.csv`
-
-Each output map has exactly one primary bubble layer. Supporting metrics stay
-in the clean file and appear in the bubble tooltip, so the maps do not lose
-context while avoiding multiple bubble layers.
-
-The notebook does not create or use `map_files/`.
-
 ```{python}
-from pathlib import Path
 import sys
+from pathlib import Path
 
-import geopandas as gpd
-import pandas as pd
-import yaml
-from shapely import wkt
-
+# ------------------------------------------------------------
+# Find project root and make src/ importable
+# ------------------------------------------------------------
 PROJECT_DIR = Path.cwd()
+
 while not (PROJECT_DIR / "src").exists() and PROJECT_DIR != PROJECT_DIR.parent:
     PROJECT_DIR = PROJECT_DIR.parent
 
-if str(PROJECT_DIR) not in sys.path:
-    sys.path.insert(0, str(PROJECT_DIR))
+if not (PROJECT_DIR / "src").exists():
+    raise FileNotFoundError("Could not find project root containing src/ folder.")
+
+sys.path.insert(0, str(PROJECT_DIR))
+
+import yaml
+import pandas as pd
+import geopandas as gpd
+from IPython.display import display, HTML
 
 from src.map_utils import (
-    build_metric_bubble_map,
-    find_project_dir,
-    format_metric_value,
+    add_metric_layer,
+    make_base_map,
 )
 
-PROJECT_DIR = find_project_dir()
+DOMAIN = "economic-food"
+
 CLEAN_PATH = PROJECT_DIR / "data" / "clean" / "economic-food.csv"
+GEOGRAPHY_PATH = PROJECT_DIR / "data" / "raw" / "Geography" / "cb3_2020_census_tracts.geojson"
 METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
-OUTPUT_DIR = PROJECT_DIR / "maps" / "economic-food"
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-PRIMARY_DOMAIN = "economic-security-food"
-CONTEXT_DOMAIN = "economic-security-food-context"
-EXCLUDED_DEMOGRAPHIC_METRICS = {"senior_poverty_rate"}
-```
 
-```{python}
-def to_map_spec(meta, include_filename=False):
-    """Convert metric_metadata.yml entries into the spec expected by map_utils."""
+# ------------------------------------------------------------
+# Page-level CSS
+# ------------------------------------------------------------
+display(
+    HTML(
+        """
+        <style>
+        h1.title {
+            display: none;
+        }
+
+        .quarto-title-block {
+            display: none;
+        }
+
+        .cell-output-stdout {
+            display: none;
+        }
+
+        .leaflet-top.leaflet-left {
+            left: auto !important;
+            right: 10px !important;
+        }
+
+        .leaflet-top.leaflet-left .leaflet-control {
+            margin-left: 0 !important;
+            margin-right: 10px !important;
+        }
+
+        .leaflet-control-layers {
+            display: none;
+        }
+
+        .economic-food-map-title {
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+            font-weight: 700;
+            margin-top: 24px;
+            margin-bottom: 8px;
+        }
+        </style>
+        """
+    )
+)
+
+
+# ------------------------------------------------------------
+# Load clean economic/food data
+# ------------------------------------------------------------
+clean = pd.read_csv(CLEAN_PATH, dtype={"GEOID": str})
+clean["GEOID"] = clean["GEOID"].astype(str).str.zfill(11)
+
+
+# ------------------------------------------------------------
+# Load CB3 tract geography
+# ------------------------------------------------------------
+tracts = gpd.read_file(GEOGRAPHY_PATH)
+tracts.columns = tracts.columns.str.strip()
+
+if "GEOID" not in tracts.columns:
+    if "geoid" in tracts.columns:
+        tracts = tracts.rename(columns={"geoid": "GEOID"})
+    else:
+        raise ValueError("Could not find GEOID/geoid column in CB3 geography file.")
+
+tracts["GEOID"] = tracts["GEOID"].astype(str).str.zfill(11)
+
+
+# ------------------------------------------------------------
+# Join clean metrics to geography
+# ------------------------------------------------------------
+tracts = tracts.merge(
+    clean,
+    on="GEOID",
+    how="left",
+    validate="one_to_one",
+)
+
+assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
+assert tracts["GEOID"].is_unique, "GEOID is not unique after merge."
+
+
+# ------------------------------------------------------------
+# Load metric metadata
+# ------------------------------------------------------------
+with open(METADATA_PATH) as f:
+    all_metrics = yaml.safe_load(f)
+
+metric_specs = {
+    var: meta
+    for var, meta in all_metrics.items()
+    if meta.get("domain") == DOMAIN
+}
+
+
+# ------------------------------------------------------------
+# Select economic/food metrics to map
+# ------------------------------------------------------------
+preferred_metrics = [
+    "poverty_rate_pct",
+    "food_supply_gap_rank",
+    "food_supply_gap_score",
+]
+
+metrics_to_map = [
+    metric
+    for metric in preferred_metrics
+    if metric in metric_specs
+    and metric in tracts.columns
+    and not tracts[metric].isna().all()
+]
+
+if not metrics_to_map:
+    raise ValueError(
+        "No economic-food metrics found to map. Check docs/metric_metadata.yml "
+        "and data/clean/economic-food.csv."
+    )
+
+
+# ------------------------------------------------------------
+# Create one separate map per metric
+# ------------------------------------------------------------
+for metric in metrics_to_map:
+    meta = metric_specs[metric]
+
+    display(
+        HTML(
+            f"""
+            <div class="economic-food-map-title">
+                {meta["label"]}
+            </div>
+            """
+        )
+    )
+
     spec = {
         "dimension": meta["short_label"],
         "label": meta["label"],
         "unit": meta["unit"],
+        "palette": meta["palette"],
     }
 
-    if "palette" in meta:
-        spec["palette"] = meta["palette"]
-
-    if include_filename:
-        spec["filename"] = meta["filename"]
-
-    for optional_key in ("positive_values_only", "zero_color", "zero_label"):
+    for optional_key in ["positive_values_only", "zero_color", "zero_label"]:
         if optional_key in meta:
             spec[optional_key] = meta[optional_key]
 
-    return spec
+    m = make_base_map(tracts)
 
-
-with open(METADATA_PATH, encoding="utf-8") as f:
-    all_metrics = yaml.safe_load(f) or {}
-
-primary_specs = {
-    variable: to_map_spec(meta, include_filename=True)
-    for variable, meta in all_metrics.items()
-    if meta.get("domain") == PRIMARY_DOMAIN
-}
-
-context_specs = {
-    variable: to_map_spec(meta, include_filename=True)
-    for variable, meta in all_metrics.items()
-    if meta.get("domain") == CONTEXT_DOMAIN
-}
-
-demographic_specs = {
-    variable: to_map_spec(meta)
-    for variable, meta in all_metrics.items()
-    if meta.get("domain") == "demographics"
-    and variable not in EXCLUDED_DEMOGRAPHIC_METRICS
-}
-
-if not primary_specs:
-    raise ValueError(f"No primary map metrics found with domain: {PRIMARY_DOMAIN}")
-
-if not demographic_specs:
-    raise ValueError("No demographic metrics found in metric_metadata.yml.")
-
-print("Primary Economic/Food map metrics:")
-for variable, spec in primary_specs.items():
-    print(f"  {variable} -> {spec['filename']}")
-
-print("\nContext metrics available for tooltips:")
-for variable in context_specs:
-    print(f"  {variable}")
-
-print("\nDemographic backdrop metrics:")
-for variable in demographic_specs:
-    print(f"  {variable}")
-```
-
-## Four map topics
-
-```{python}
-MAP_TOPICS = {
-    "safety_net_reliance": {
-        "primary_metric": "safety_net_enrollment_per_capita",
-        "title": "CB3 Economic Security & Food: Safety-net reliance",
-        "subtitle": (
-            "Bubbles show safety-net enrollment per capita. "
-            "Tooltip also shows poverty and safety-net program counts where available. "
-            "Use the layer control to pick a demographic background."
-        ),
-        "context_metrics": [
-            "poverty_rate_pct",
-            "poverty_count",
-            "poverty_universe_population",
-            "medicaid_enrollment",
-            "snap_enrollment",
-            "cash_assistance_enrollment",
-            "safety_net_enrollment",
-        ],
-    },
-    "labor_market_conditions": {
-        "primary_metric": "unemployment_rate_pct",
-        "title": "CB3 Economic Security & Food: Labor-market conditions",
-        "subtitle": (
-            "Bubbles show unemployment rate. "
-            "Tooltip also shows labor-force size, unemployed population, median earnings, "
-            "and household income where available. Use the layer control to pick a demographic background."
-        ),
-        "context_metrics": [
-            "civilian_labor_force",
-            "unemployed_population",
-            "median_earnings_all_workers",
-            "median_household_income",
-        ],
-    },
-    "food_insecurity": {
-        "primary_metric": "food_insecurity_rate_pct",
-        "title": "CB3 Economic Security & Food: Food insecurity",
-        "subtitle": (
-            "Bubbles show tract-level food insecurity rate. "
-            "Tooltip also shows NTA-level food supply gap rank, score, food-insecure share, "
-            "and supply gap pounds where available. Use the layer control to pick a demographic background."
-        ),
-        "context_metrics": [
-            "food_supply_gap_rank_nta",
-            "food_supply_gap_score_nta",
-            "food_supply_gap_food_insecure_pct_nta",
-            "food_supply_gap_lbs_nta",
-        ],
-    },
-    "utility_shutoff_risk": {
-        "primary_metric": "utility_shutoff_risk_pct",
-        "title": "CB3 Economic Security & Food: Utility shutoff risk",
-        "subtitle": (
-            "Bubbles show estimated utility shutoff risk. "
-            "Use the layer control to pick a demographic background."
-        ),
-        "context_metrics": [],
-    },
-}
-```
-
-## Load prepared clean map file
-
-```{python}
-if not CLEAN_PATH.exists():
-    raise FileNotFoundError(
-        f"Could not find {CLEAN_PATH}. Run scripts/economic-food/build.py first."
+    add_metric_layer(
+        m,
+        tracts,
+        metric,
+        spec,
+        show=True,
+        overlay=False,
     )
 
-clean = pd.read_csv(CLEAN_PATH, dtype={"GEOID": "string"}, low_memory=False)
-
-required_columns = {
-    "GEOID",
-    "tract_label",
-    "nta_name",
-    "tract_centroid_latitude",
-    "tract_centroid_longitude",
-    "geometry_wkt",
-}
-missing_required = sorted(required_columns - set(clean.columns))
-if missing_required:
-    raise ValueError(
-        "economic-food.csv is not map-ready. Missing columns: "
-        + ", ".join(missing_required)
-        + ". Re-run the refactored scripts/economic-food/build.py."
-    )
-
-clean["GEOID"] = clean["GEOID"].astype(str).str.extract(r"(\d+)")[0].str.zfill(11)
-clean["geometry"] = clean["geometry_wkt"].map(wkt.loads)
-
-tracts = gpd.GeoDataFrame(
-    clean.drop(columns=["geometry_wkt"]),
-    geometry="geometry",
-    crs="EPSG:4326",
-)
-
-all_spec_columns = set(primary_specs) | set(context_specs) | set(demographic_specs)
-for column in all_spec_columns:
-    if column in tracts.columns:
-        tracts[column] = pd.to_numeric(tracts[column], errors="coerce")
-
-available_primary_specs = {
-    metric: spec
-    for metric, spec in primary_specs.items()
-    if metric in tracts.columns and tracts[metric].notna().any()
-}
-
-available_context_specs = {
-    metric: spec
-    for metric, spec in context_specs.items()
-    if metric in tracts.columns and tracts[metric].notna().any()
-}
-
-available_demographic_specs = {
-    metric: spec
-    for metric, spec in demographic_specs.items()
-    if metric in tracts.columns and tracts[metric].notna().any()
-}
-
-assert len(tracts) == 31, f"Expected 31 CB3 tracts, got {len(tracts)}"
-assert tracts["GEOID"].is_unique
-
-missing_primary = [
-    topic["primary_metric"]
-    for topic in MAP_TOPICS.values()
-    if topic["primary_metric"] not in available_primary_specs
-]
-if missing_primary:
-    raise ValueError(
-        "These four-map primary metrics are missing or all null in economic-food.csv/YAML: "
-        + ", ".join(missing_primary)
-    )
-
-if not available_demographic_specs:
-    raise ValueError(
-        "No demographic backdrop columns are available in data/clean/economic-food.csv. "
-        "Make sure build.py merged a baseline file or that economic-food.csv already contains demographics."
-    )
-
-print("Available primary map metrics:")
-for metric, spec in available_primary_specs.items():
-    print(f"  {metric}: {tracts[metric].notna().sum()} tracts -> {spec['filename']}")
-
-print("\nAvailable context metrics:")
-for metric, spec in available_context_specs.items():
-    print(f"  {metric}: {tracts[metric].notna().sum()} tracts")
-
-print("\nAvailable demographic backdrops:")
-for metric in available_demographic_specs:
-    print(f"  {metric}: {tracts[metric].notna().sum()} tracts")
-```
-
-## Add formatted context columns for tooltips
-
-```{python}
-def add_context_display_column(frame, metric, spec):
-    display_col = f"{metric}_display"
-    frame[display_col] = frame[metric].map(
-        lambda value: format_metric_value(value, spec["unit"])
-    )
-    return display_col
-
-
-context_display_columns = {}
-for metric, spec in {**available_context_specs, **available_primary_specs}.items():
-    if metric in tracts.columns:
-        context_display_columns[metric] = add_context_display_column(tracts, metric, spec)
-```
-
-## Render four maps
-
-```{python}
-rendered = {}
-
-for topic_name, topic in MAP_TOPICS.items():
-    primary_metric = topic["primary_metric"]
-    spec = available_primary_specs[primary_metric]
-    output_path = OUTPUT_DIR / spec["filename"]
-
-    tooltip_fields = ["tract_label", "nta_name"]
-    tooltip_aliases = ["Census tract", "NTA"]
-
-    for context_metric in topic["context_metrics"]:
-        if context_metric in context_display_columns:
-            tooltip_fields.append(context_display_columns[context_metric])
-            tooltip_aliases.append(
-                available_context_specs.get(context_metric, available_primary_specs.get(context_metric))["label"]
-            )
-
-    map_object = build_metric_bubble_map(
-        tracts=tracts,
-        metric_specs=available_primary_specs,
-        demographic_specs=available_demographic_specs,
-        metric=primary_metric,
-        title=topic["title"],
-        subtitle=topic["subtitle"],
-        output_path=output_path,
-        tooltip_fields=tooltip_fields,
-        tooltip_aliases=tooltip_aliases,
-    )
-
-    rendered[topic_name] = {
-        "metric": primary_metric,
-        "map": map_object,
-        "output_path": output_path,
-    }
-
-    print(f"Saved {topic_name}: {output_path.relative_to(PROJECT_DIR)}")
-
-print(f"\nRendered {len(rendered)} Economic/Food topic maps.")
-```
-
-## Preview first rendered map
-
-```{python}
-first_topic = next(iter(rendered))
-rendered[first_topic]["map"]
-```
-
-## Validation summary
-
-```{python}
-summary = pd.DataFrame(
-    [
-        {
-            "topic": topic_name,
-            "primary_metric": details["metric"],
-            "label": available_primary_specs[details["metric"]]["label"],
-            "html_file": available_primary_specs[details["metric"]]["filename"],
-            "tracts_with_data": int(tracts[details["metric"]].notna().sum()),
-            "output_exists": details["output_path"].exists(),
-            "output_size_bytes": details["output_path"].stat().st_size,
-        }
-        for topic_name, details in rendered.items()
-    ]
-)
-
-display(summary)
-
-for details in rendered.values():
-    path = details["output_path"]
-    assert path.exists(), path
-    assert path.stat().st_size > 10_000, path
-
-print("Output files:")
-for topic_name, details in rendered.items():
-    print(f"  {topic_name}: {details['output_path'].relative_to(PROJECT_DIR)}")
+    display(m)
 ```
