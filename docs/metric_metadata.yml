@@ -491,6 +491,154 @@ hurricane_evacuation_zone:
   display_format: category
   filename: hurricane_evacuation_zones.html
 
+# --- Public Services ---
+
+park_footprint:
+  domain: public_service
+  short_label: Park footprint
+  label: Park property boundary
+  description: >
+    Real park property boundary polygons (not centroid points), shown as a
+    plain outline/fill. Tooltip lists the park's category and recorded
+    facility types.
+  unit: ""
+  fill_color: "#1a1a1a"
+  outline_color: "#ffffff"
+  source: NYC Parks Properties dataset (OpenData)
+  year: 2026
+  geography: Individual park property (polygon)
+  higher_is: context
+  map_classification: outline
+  display_format: none
+  filename: park_facility_inventory.html
+
+park_facility_inventory:
+  domain: public_service
+  short_label: Park facility inventory
+  label: Park facility type
+  description: >
+    Individual facility-type icons inside each park's real footprint
+    (basketball court, other court, baseball/softball field, pool, football
+    field, running track, soccer field, tennis court, playground, dog run).
+    A park with more than one facility type has its icons spread around a
+    small ring rather than stacked at one point. Pickleball courts,
+    chess/game tables, and skate parks are not columns in the source
+    facility inventory and are not represented here.
+  unit: ""
+  category_colors:
+    Basketball court: "#e6194b"
+    Other court: "#3cb44b"
+    Baseball/softball field: "#4363d8"
+    Pool: "#42d4f4"
+    Football field: "#f58231"
+    Running track: "#911eb4"
+    Soccer field: "#469990"
+    Tennis court: "#9a6324"
+    Playground: "#000075"
+    Dog run: "#808000"
+  source: NYC Parks Facilities dataset (OpenData)
+  year: 2026
+  geography: Individual facility icon inside its park polygon
+  higher_is: context
+  map_classification: categorical
+  display_format: category
+  filename: park_facility_inventory.html
+
+subway_access_pct:
+  domain: public_service
+  short_label: Subway access
+  label: Tract area within ¼ mile of a subway entrance
+  description: >
+    Percent of tract area within a quarter mile of an MTA subway station
+    entrance. Entrances were filtered to the CB3 bounding box in the source
+    file, so a small number of entrances just outside CB3 may still
+    contribute to accessibility along the district's edge. Computed but not
+    mapped on its own; shown as a tooltip field on the public transportation
+    access donut-marker map instead.
+  unit: "%"
+  source: MTA Subway Entrances and Exits (NYC OpenData)
+  year: 2024
+  geography: Census tract (¼-mile buffer from entrance point)
+  higher_is: better
+  map_classification: tooltip
+  display_format: percent
+  filename: context_only.html
+
+subway_entrance_count:
+  domain: public_service
+  short_label: Subway entrances
+  label: Subway station entrances
+  description: >
+    Count of MTA subway station entrances located within the tract, shown
+    as one wedge of the public transportation access donut marker.
+  unit: " stops"
+  source: MTA Subway Entrances and Exits (NYC OpenData)
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: pie_bubble
+  display_format: count
+  filename: public_transportation_access.html
+
+bus_stop_count:
+  domain: public_service
+  short_label: Bus stops
+  label: MTA bus stops
+  description: >
+    Count of MTA bus stops located within the tract, shown as one wedge of
+    the public transportation access donut marker.
+  unit: " stops"
+  source: MTA Bus Stops (NYC OpenData)
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: pie_bubble
+  display_format: count
+  filename: public_transportation_access.html
+
+transit_stop_points:
+  domain: public_service
+  short_label: Transit stops
+  label: Transit stop type
+  description: >
+    Individual subway station entrances and bus stops, plotted at their own
+    coordinates rather than aggregated to a tract pie bubble. Added alongside
+    the tract-level donut marker map as an alternate, less-aggregated view.
+  unit: ""
+  category_colors:
+    Subway entrance: "#252525"
+    Bus stop: "#db3232"
+  source: MTA Subway Entrances and Exits (NYC OpenData); MTA Bus Stops (NYC OpenData)
+  year: 2024
+  geography: Individual subway entrance or bus stop (point)
+  higher_is: context
+  map_classification: categorical
+  display_format: category
+  filename: public_transportation_points.html
+
+public_restrooms:
+  domain: public_service
+  short_label: Public restrooms
+  label: Public restroom status and accessibility
+  description: >
+    Individual public restrooms (parks and NYPL library branches), colored by
+    operational status and, if operational, ADA accessibility. Not listed in
+    CB3_Data_Reference_by_Domain_v4.csv's Public Services rows; included as a
+    standalone map from the available clean data.
+  unit: ""
+  category_colors:
+    Fully Accessible: "#238b45"
+    Not Accessible: "#d94701"
+    Accessibility not reported: "#969696"
+    Not operational or closed for construction: "#252525"
+  source: NYC public restroom locations (parks and NYPL branches)
+  year: 2026
+  geography: Individual restroom (point)
+  higher_is: context
+  map_classification: categorical
+  display_format: category
+  filename: public_restrooms.html
+
 # --- Demographics (baseline context, not domain outcomes) ---
 
 median_household_income:
