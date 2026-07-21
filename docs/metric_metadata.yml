@@ -656,11 +656,11 @@ median_household_income:
   display_format: currency
   filename: context_only.html
   palette:
-    - "#f7fcf0"
-    - "#ccebc5"
-    - "#7bccc4"
-    - "#2b8cbe"
-    - "#084081"
+    - "#f7fcf5"
+    - "#c7e9c0"
+    - "#74c476"
+    - "#238b45"
+    - "#00441b"
 
 age_0_to_19_share:
   domain: demographics
@@ -678,10 +678,10 @@ age_0_to_19_share:
   filename: context_only.html
   palette:
     - "#f7fbff"
-    - "#deebf7"
     - "#c6dbef"
     - "#6baed6"
     - "#2171b5"
+    - "#08306b"
 
 age_20_to_64_share:
   domain: demographics
@@ -699,10 +699,10 @@ age_20_to_64_share:
   filename: context_only.html
   palette:
     - "#f7fbff"
-    - "#deebf7"
     - "#c6dbef"
     - "#6baed6"
     - "#2171b5"
+    - "#08306b"
 
 age_65_plus_share:
   domain: demographics
@@ -719,11 +719,11 @@ age_65_plus_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#fff7ec"
-    - "#fee8c8"
-    - "#fdbb84"
-    - "#e34a33"
-    - "#b30000"
+    - "#f7fbff"
+    - "#c6dbef"
+    - "#6baed6"
+    - "#2171b5"
+    - "#08306b"
 
 white_non_hispanic_share:
   domain: demographics
@@ -740,11 +740,11 @@ white_non_hispanic_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7f4f9"
+    - "#d4b9da"
+    - "#df65b0"
+    - "#ce1256"
+    - "#67001f"
 
 black_non_hispanic_share:
   domain: demographics
@@ -761,11 +761,11 @@ black_non_hispanic_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7f4f9"
+    - "#d4b9da"
+    - "#df65b0"
+    - "#ce1256"
+    - "#67001f"
 
 asian_non_hispanic_share:
   domain: demographics
@@ -782,11 +782,11 @@ asian_non_hispanic_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7f4f9"
+    - "#d4b9da"
+    - "#df65b0"
+    - "#ce1256"
+    - "#67001f"
 
 hispanic_share:
   domain: demographics
@@ -803,11 +803,11 @@ hispanic_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7f4f9"
+    - "#d4b9da"
+    - "#df65b0"
+    - "#ce1256"
+    - "#67001f"
 
 poverty_rate:
   domain: demographics
@@ -824,11 +824,11 @@ poverty_rate:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#fff7ec"
-    - "#fee8c8"
-    - "#fdbb84"
-    - "#e34a33"
-    - "#b30000"
+    - "#ffffcc"
+    - "#ffeda0"
+    - "#feb24c"
+    - "#f03b20"
+    - "#bd0026"
 
 senior_poverty_rate:
   domain: demographics
@@ -859,11 +859,11 @@ lep_household_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fcf5"
-    - "#e5f5e0"
-    - "#a1d99b"
-    - "#31a354"
-    - "#006d2c"
+    - "#f2f0f7"
+    - "#cbc9e2"
+    - "#9e9ac8"
+    - "#756bb1"
+    - "#54278f"
 
 # --- Health ---
 
