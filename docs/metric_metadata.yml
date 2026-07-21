@@ -642,7 +642,7 @@ public_restrooms:
 # --- Demographics (baseline context, not domain outcomes) ---
 
 median_household_income:
-  domain: senior-context
+  domain: demographics 
   short_label: Median household income
   dimension: Median household income
   label: Median household income
@@ -663,7 +663,7 @@ median_household_income:
     - "#084081"
 
 age_0_to_19_share:
-  domain: senior-context
+  domain: demographics
   short_label: Age 0-19
   dimension: Age 0-19
   label: Age 0-19
@@ -684,7 +684,7 @@ age_0_to_19_share:
     - "#2171b5"
 
 age_20_to_64_share:
-  domain: senior-context
+  domain: demographics
   short_label: Age 20-64
   dimension: Age 20-64
   label: Age 20-64
@@ -705,7 +705,7 @@ age_20_to_64_share:
     - "#2171b5"
 
 age_65_plus_share:
-  domain: senior-context
+  domain: demographics
   short_label: Age 65+
   dimension: Age 65+
   label: Age 65+
@@ -726,7 +726,7 @@ age_65_plus_share:
     - "#b30000"
 
 white_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: White non-Hispanic share
   dimension: White non-Hispanic share
   label: White non-Hispanic share
@@ -747,7 +747,7 @@ white_non_hispanic_share:
     - "#2171b5"
 
 black_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Black non-Hispanic share
   dimension: Black non-Hispanic share
   label: Black non-Hispanic share
@@ -768,7 +768,7 @@ black_non_hispanic_share:
     - "#2171b5"
 
 asian_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Asian non-Hispanic share
   dimension: Asian non-Hispanic share
   label: Asian non-Hispanic share
@@ -789,7 +789,7 @@ asian_non_hispanic_share:
     - "#2171b5"
 
 hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Hispanic share
   dimension: Hispanic share
   label: Hispanic share
@@ -810,7 +810,7 @@ hispanic_share:
     - "#2171b5"
 
 poverty_rate:
-  domain: senior-context
+  domain: demographics
   short_label: Poverty rate
   dimension: Poverty rate
   label: Poverty rate
@@ -845,7 +845,7 @@ senior_poverty_rate:
   display_format: percent
 
 lep_household_share:
-  domain: senior-context
+  domain: demographics
   short_label: Limited-English-proficient households
   dimension: Limited-English-proficient households
   label: Limited-English-proficient households
