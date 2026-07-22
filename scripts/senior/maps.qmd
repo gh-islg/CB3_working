@@ -1,0 +1,456 @@
+---
+title: "Senior Domain Maps"
+format:
+  html:
+    embed-resources: false
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python}
+from pathlib import Path
+import sys
+
+# Make this QMD robust when Quarto executes from scripts/senior/.
+for candidate in [Path.cwd(), *Path.cwd().parents]:
+    if (candidate / "src").exists() and (candidate / "data").exists():
+        sys.path.insert(0, str(candidate))
+        break
+
+import folium
+import geopandas as gpd
+import pandas as pd
+import yaml
+from shapely import wkt
+
+from src.map_utils import (
+    add_categorical_point_layer,
+    add_demographic_backdrop_layers,
+    add_map_title,
+    build_metric_bubble_map,
+    find_project_dir,
+    make_base_map,
+)
+```
+
+```{python}
+PROJECT_DIR = find_project_dir()
+CLEAN = PROJECT_DIR / "data" / "clean"
+OUTPUT_DIR = PROJECT_DIR / "maps" / "senior"
+METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
+
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+senior_path = CLEAN / "senior.csv"
+facilities_path = CLEAN / "senior_facilities.csv"
+crashes_path = CLEAN / "senior_pedestrian_crashes.csv"
+top_intersections_path = CLEAN / "senior_top_intersections.csv"
+
+for path in [senior_path, facilities_path, crashes_path, top_intersections_path, METADATA_PATH]:
+    if not path.exists():
+        raise FileNotFoundError(path)
+
+metadata = yaml.safe_load(METADATA_PATH.read_text()) or {}
+
+senior = pd.read_csv(senior_path, dtype={"GEOID": str}, low_memory=False)
+senior["geometry"] = senior["geometry_wkt"].map(wkt.loads)
+tracts = gpd.GeoDataFrame(senior, geometry="geometry", crs="EPSG:4326")
+
+facilities = pd.read_csv(facilities_path, dtype={"GEOID": str}, low_memory=False)
+crashes = pd.read_csv(crashes_path, dtype={"GEOID": str}, low_memory=False)
+top_intersections = pd.read_csv(top_intersections_path, low_memory=False)
+
+for frame in [facilities, crashes, top_intersections]:
+    for column in ["latitude", "longitude"]:
+        if column in frame.columns:
+            frame[column] = pd.to_numeric(frame[column], errors="coerce")
+
+numeric_columns = [
+    "senior_population_65plus",
+    "senior_population_share",
+    "senior_lep_count_65plus",
+    "senior_lep_rate_65plus",
+    "other_languages_senior_lep_rate_65plus",
+    "other_languages_senior_lep_count_65plus",
+    "asian_pacific_senior_lep_rate_65plus",
+    "asian_pacific_senior_lep_count_65plus",
+    "other_indo_european_senior_lep_rate_65plus",
+    "other_indo_european_senior_lep_count_65plus",
+    "spanish_senior_lep_rate_65plus",
+    "spanish_senior_lep_count_65plus",
+    "asian_senior_poverty_rate_60plus",
+    "black_senior_poverty_rate_60plus",
+    "hispanic_senior_poverty_rate_60plus",
+    "white_nh_senior_poverty_rate_60plus",
+    "mltfam_walkup_rate",
+    "total_mltfam_bldgs_3plus",
+    "median_household_income",
+    "age_65_plus_share",
+    "age_65_plus_population",
+    "white_non_hispanic_share",
+    "black_non_hispanic_share",
+    "asian_non_hispanic_share",
+    "hispanic_share",
+    "poverty_rate",
+    "lep_household_share",
+]
+for column in numeric_columns:
+    if column in tracts.columns:
+        tracts[column] = pd.to_numeric(tracts[column], errors="coerce")
+```
+
+```{python}
+demographic_keys = [
+    key for key in [
+        "median_household_income",
+        "age_0_to_19_share",
+        "age_20_to_64_share",
+        "age_65_plus_share",
+        "white_non_hispanic_share",
+        "black_non_hispanic_share",
+        "asian_non_hispanic_share",
+        "hispanic_share",
+        "poverty_rate",
+        "lep_household_share",
+    ]
+    if key in metadata and key in tracts.columns and tracts[key].notna().any()
+]
+
+if not demographic_keys:
+    raise KeyError(
+        "No demographic backdrop metrics are available. Expected shared demographic columns in senior.csv and docs/metric_metadata.yml."
+    )
+
+demographic_specs = {key: metadata[key] for key in demographic_keys}
+
+service_category_colors = metadata["senior_service_sites"].get("category_colors", {})
+pedestrian_category_colors = metadata["senior_pedestrian_safety_points"].get(
+    "category_colors", {}
+)
+top_intersection_category_colors = metadata["senior_pedestrian_top_intersections"].get(
+    "category_colors", {}
+)
+
+for label, color_spec in [
+    ("senior_service_sites.category_colors", service_category_colors),
+    ("senior_pedestrian_safety_points.category_colors", pedestrian_category_colors),
+    ("senior_pedestrian_top_intersections.category_colors", top_intersection_category_colors),
+]:
+    if not color_spec:
+        raise KeyError(f"Missing {label} in docs/metric_metadata.yml")
+
+```
+
+## Senior service supply
+
+```{python}
+service_output = OUTPUT_DIR / "senior_service_supply.html"
+
+service_map = make_base_map(tracts)
+add_demographic_backdrop_layers(
+    service_map,
+    tracts,
+    demographic_specs,
+    none_option_label="No demographic background",
+)
+
+facilities_for_map = facilities[
+    facilities["facility_type"].isin(service_category_colors)
+    & facilities["latitude"].notna()
+    & facilities["longitude"].notna()
+].copy()
+
+service_layers = [
+    ("NORC", "NORCs", 35),
+    ("Older Adult Center", "Older Adult Centers", 105),
+]
+
+for facility_type, layer_label, legend_offset in service_layers:
+    sites = facilities_for_map[
+        facilities_for_map["facility_type"].eq(facility_type)
+    ].copy()
+
+    if sites.empty:
+        print(f"Warning: no {facility_type} locations available.")
+        continue
+
+    add_categorical_point_layer(
+        service_map,
+        sites,
+        category_col="facility_type",
+        category_colors={
+            facility_type: service_category_colors[facility_type]
+        },
+        name=f"{layer_label} (n={len(sites)})",
+        lat_col="latitude",
+        lon_col="longitude",
+        tooltip_fields=["facility_name", "facility_address"],
+        tooltip_aliases=["Facility", "Address"],
+        size=15,
+        legend_bottom_offset=legend_offset,
+    )
+
+add_map_title(
+    service_map,
+    "CB3 Seniors: Senior service supply",
+    "DFTA-funded Older Adult Centers and NORCs over selectable demographic backdrops.",
+)
+folium.LayerControl(collapsed=False, position="topright").add_to(service_map)
+service_map.save(service_output)
+
+print(f"Saved: {service_output.relative_to(PROJECT_DIR)}")
+```
+
+## Senior pedestrian safety
+
+```{python}
+pedestrian_output = OUTPUT_DIR / "senior_pedestrian_safety.html"
+
+pedestrian_map = make_base_map(tracts)
+add_demographic_backdrop_layers(
+    pedestrian_map,
+    tracts,
+    demographic_specs,
+    none_option_label="No demographic background",
+)
+
+if crashes.empty:
+    print("Warning: no senior pedestrian crash points available.")
+else:
+    incident_colors = {
+        key: value
+        for key, value in pedestrian_category_colors.items()
+        if key == "Senior pedestrian injury/incident"
+    }
+    fatality_colors = {
+        key: value
+        for key, value in pedestrian_category_colors.items()
+        if key == "Senior pedestrian fatality"
+    }
+
+    incidents = crashes[
+        crashes["incident_type"].eq("Senior pedestrian injury/incident")
+        & crashes["latitude"].notna()
+        & crashes["longitude"].notna()
+    ].copy()
+    fatalities = crashes[
+        crashes["incident_type"].eq("Senior pedestrian fatality")
+        & crashes["latitude"].notna()
+        & crashes["longitude"].notna()
+    ].copy()
+
+    if not incidents.empty:
+        add_categorical_point_layer(
+            pedestrian_map,
+            incidents,
+            category_col="incident_type",
+            category_colors=incident_colors,
+            name=f"Senior pedestrian incidents (n={len(incidents)})",
+            lat_col="latitude",
+            lon_col="longitude",
+            tooltip_fields=["crash_date", "intersection", "PERSON_AGE", "PERSON_INJURY"],
+            tooltip_aliases=["Crash date", "Location", "Age", "Injury"],
+            size=10,
+            legend_bottom_offset=35,
+        )
+
+    if not fatalities.empty:
+        add_categorical_point_layer(
+            pedestrian_map,
+            fatalities,
+            category_col="incident_type",
+            category_colors=fatality_colors,
+            name=f"Senior pedestrian fatalities (n={len(fatalities)})",
+            lat_col="latitude",
+            lon_col="longitude",
+            tooltip_fields=["crash_date", "intersection", "PERSON_AGE", "PERSON_INJURY"],
+            tooltip_aliases=["Crash date", "Location", "Age", "Injury"],
+            size=20,
+            legend_bottom_offset=135,
+        )
+
+if not top_intersections.empty:
+    top_intersections["point_type"] = "Top senior pedestrian crash intersection"
+    add_categorical_point_layer(
+        pedestrian_map,
+        top_intersections.dropna(subset=["latitude", "longitude"]).copy(),
+        category_col="point_type",
+        category_colors=top_intersection_category_colors,
+        name="Top 5 senior pedestrian crash intersections",
+        lat_col="latitude",
+        lon_col="longitude",
+        tooltip_fields=["label"],
+        tooltip_aliases=["Intersection"],
+        size=22,
+        legend_bottom_offset=235,
+    )
+
+fatality_count = int(crashes["fatality"].sum()) if "fatality" in crashes.columns and not crashes.empty else 0
+incident_count = len(crashes)
+add_map_title(
+    pedestrian_map,
+    "CB3 Seniors: Senior pedestrian safety",
+    f"{incident_count} senior pedestrian incidents in 2024–2025; fatalities: {fatality_count}.",
+)
+folium.LayerControl(collapsed=False, position="topright").add_to(pedestrian_map)
+pedestrian_map.save(pedestrian_output)
+
+print(f"Saved: {pedestrian_output.relative_to(PROJECT_DIR)}")
+```
+
+## Senior poverty by race
+
+```{python}
+poverty_metrics = {
+    "asian_senior_poverty_rate_60plus": {
+        "title": "CB3 Seniors: Asian senior poverty",
+    },
+    "black_senior_poverty_rate_60plus": {
+        "title": "CB3 Seniors: Black senior poverty",
+    },
+    "hispanic_senior_poverty_rate_60plus": {
+        "title": "CB3 Seniors: Hispanic senior poverty",
+    },
+    "white_nh_senior_poverty_rate_60plus": {
+        "title": "CB3 Seniors: White non-Hispanic senior poverty",
+    },
+}
+
+for metric, settings in poverty_metrics.items():
+    if metric not in tracts.columns or tracts[metric].notna().sum() == 0:
+        print(f"Warning: {metric} is unavailable.")
+        continue
+
+    if metric not in metadata:
+        print(f"Warning: {metric} is missing from docs/metric_metadata.yml.")
+        continue
+
+    output_path = OUTPUT_DIR / metadata[metric]["filename"]
+
+    build_metric_bubble_map(
+        tracts=tracts,
+        metric_specs={metric: metadata[metric]},
+        demographic_specs=demographic_specs,
+        metric=metric,
+        title=settings["title"],
+        subtitle=(
+            f"Bubbles: {metadata[metric]['label']}. "
+            "Background: selectable demographic layer."
+        ),
+        output_path=output_path,
+    )
+
+    print(f"Saved: {output_path.relative_to(PROJECT_DIR)}")
+```
+
+## Senior LEP
+
+```{python}
+lep_language_metrics = {
+    "spanish_senior_lep_rate_65plus": {
+        "title": "CB3 Seniors: Senior LEP — Spanish",
+    },
+    "other_indo_european_senior_lep_rate_65plus": {
+        "title": "CB3 Seniors: Senior LEP — Other Indo-European languages",
+    },
+    "asian_pacific_senior_lep_rate_65plus": {
+        "title": "CB3 Seniors: Senior LEP — Asian and Pacific Island languages",
+    },
+    "other_languages_senior_lep_rate_65plus": {
+        "title": "CB3 Seniors: Senior LEP — Other languages",
+    },
+}
+
+for metric, settings in lep_language_metrics.items():
+    if metric not in tracts.columns or tracts[metric].notna().sum() == 0:
+        print(f"Warning: {metric} is unavailable.")
+        continue
+
+    if metric not in metadata:
+        print(f"Warning: {metric} is missing from docs/metric_metadata.yml.")
+        continue
+
+    output_path = OUTPUT_DIR / metadata[metric]["filename"]
+
+    build_metric_bubble_map(
+        tracts=tracts,
+        metric_specs={metric: metadata[metric]},
+        demographic_specs=demographic_specs,
+        metric=metric,
+        title=settings["title"],
+        subtitle=(
+            f"Bubbles: {metadata[metric]['label']}. "
+            "Background: selectable demographic layer."
+        ),
+        output_path=output_path,
+    )
+
+    print(f"Saved: {output_path.relative_to(PROJECT_DIR)}")
+```
+
+## Senior housing access
+
+```{python}
+housing_metric = "mltfam_walkup_rate"
+
+if housing_metric not in tracts.columns or tracts[housing_metric].notna().sum() == 0:
+    print(
+        "Warning: walk-up rate is unavailable. "
+        "Add MapPLUTO/HPD elevator raw files or Kailey's tract-rate fallback with walk-up fields."
+    )
+else:
+    housing_output = OUTPUT_DIR / "senior_housing_walkup_access.html"
+    build_metric_bubble_map(
+        tracts=tracts,
+        metric_specs={housing_metric: metadata[housing_metric]},
+        demographic_specs=demographic_specs,
+        metric=housing_metric,
+        title="CB3 Seniors: Senior housing access",
+        subtitle=(
+            "Bubbles: estimated share of 3+ floor multifamily buildings without elevator access. "
+            "Background: selectable demographic layer. Senior-targeted affordable unit locations "
+            "require additional Furman SHD / HPD Local Law 44 inputs."
+        ),
+        output_path=housing_output,
+    )
+    print(f"Saved: {housing_output.relative_to(PROJECT_DIR)}")
+```
+
+## Validation summary
+
+```{python}
+outputs = sorted(OUTPUT_DIR.glob("*.html"))
+summary = pd.DataFrame(
+    [{"html_file": path.name, "size_bytes": path.stat().st_size} for path in outputs]
+)
+display(summary)
+
+expected = {
+    "senior_service_supply.html",
+    "senior_pedestrian_safety.html",
+    "senior_poverty_asian.html",
+    "senior_poverty_black.html",
+    "senior_poverty_hispanic.html",
+    "senior_poverty_white_non_hispanic.html",
+    "senior_lep_spanish.html",
+    "senior_lep_other_indo_european.html",
+    "senior_lep_asian_pacific.html",
+    "senior_lep_other_languages.html",
+    "senior_housing_walkup_access.html",
+}
+created = {path.name for path in outputs}
+missing = sorted(expected - created)
+
+if missing:
+    print("Warning: expected maps not created:")
+    for name in missing:
+        print(f"  - {name}")
+else:
+    print("All expected Senior maps created.")
+
+print("SharePoint map files:")
+for path in outputs:
+    print(f"  {path.relative_to(PROJECT_DIR)}")
+```
