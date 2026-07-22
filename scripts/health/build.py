@@ -29,6 +29,7 @@ HEALTH_TRACT = CLEAN/"health_tract.csv"
 HEALTH_NTA = CLEAN/"health_nta.csv"
 HEALTH_OUT = CLEAN/"health.csv"
 LOG_OUT = CLEAN/"health_log.txt"
+ASTHMA_NTA_RAW = RAW/"NYC EH Data Portal - Asthma emergency department visits (age 5 to 17), by NTA (full table).csv"
 
 INCLUDE = ("outpatient","clinic","crisis","assertive community treatment","act team",
            "care coordination","continuing day treatment","pros","partial hospitalization")
@@ -69,6 +70,14 @@ def _normalized_text(value):
     if pd.isna(value):
         return None
     return re.sub(r"[^a-z0-9]+", " ", str(value).strip().lower()).strip()
+
+
+NTA_NAME_CROSSWALK = {
+    "chinatown": "chinatown two bridges",
+    "chinatown two bridges": "chinatown two bridges",
+    "lower east side": "lower east side",
+    "east village": "east village",
+}
 
 
 def _attach_tract_centroids():
@@ -157,6 +166,86 @@ def _build_nta_polygons():
 
     return dissolved
 
+
+def build_asthma_nta_table():
+    """Build the CB3 pediatric-asthma table from the latest NTA release."""
+    if not ASTHMA_NTA_RAW.exists():
+        raise FileNotFoundError(
+            f"Missing pediatric-asthma source file: {ASTHMA_NTA_RAW}"
+        )
+
+    raw = pd.read_csv(ASTHMA_NTA_RAW, dtype=str)
+    required = {
+        "TimePeriod",
+        "GeoType",
+        "GeoID",
+        "Geography",
+        "Average annual rate per 10,000",
+    }
+    missing = sorted(required.difference(raw.columns))
+    if missing:
+        raise ValueError(f"{ASTHMA_NTA_RAW.name} missing columns: {missing}")
+
+    raw = raw.loc[raw["GeoType"].eq("NTA2010")].copy()
+    if raw.empty:
+        raise ValueError(f"{ASTHMA_NTA_RAW.name} contains no NTA2010 rows.")
+
+    # Periods are labels such as 2014-2016 and 2017-2019. Select the period
+    # with the latest ending year instead of hard-coding a particular release.
+    period_end = pd.to_numeric(
+        raw["TimePeriod"].str.extract(r"(\d{4})\s*$", expand=False),
+        errors="coerce",
+    )
+    if period_end.notna().sum() == 0:
+        raise ValueError(f"Could not parse TimePeriod in {ASTHMA_NTA_RAW.name}.")
+    latest_period = raw.loc[period_end.idxmax(), "TimePeriod"]
+    raw = raw.loc[raw["TimePeriod"].eq(latest_period)].copy()
+
+    # Match the older DOHMH NTA labels to the NTA 2020 labels used by the
+    # shared CB3 tract universe, retaining only NTAs that overlap CB3.
+    polygons = _build_nta_polygons()
+    cb3_keys = set(polygons["nta_name"].map(_normalized_text).dropna())
+    raw["_nta_key"] = raw["Geography"].map(_normalized_text)
+    raw["_nta_key"] = raw["_nta_key"].replace(NTA_NAME_CROSSWALK)
+    raw = raw.loc[raw["_nta_key"].isin(cb3_keys)].copy()
+
+    output = raw.rename(
+        columns={
+            "GeoID": "nta_code",
+            "Geography": "nta_name",
+            "Average annual rate per 10,000": "pediatric_asthma_ed_rate",
+        }
+    )
+    output["pediatric_asthma_ed_rate"] = pd.to_numeric(
+        output["pediatric_asthma_ed_rate"], errors="coerce"
+    )
+    output = output.dropna(subset=["pediatric_asthma_ed_rate"])
+    output["source"] = "NYC DOHMH Environment & Health Data Portal"
+    output["source_release"] = latest_period
+    output = output[
+        [
+            "nta_code",
+            "nta_name",
+            "pediatric_asthma_ed_rate",
+            "source",
+            "source_release",
+        ]
+    ].sort_values("nta_code")
+
+    if output.empty:
+        raise ValueError(
+            "No pediatric-asthma rows matched the shared CB3 NTA geography."
+        )
+    if output["nta_code"].duplicated().any():
+        raise ValueError("Pediatric-asthma source has duplicate CB3 NTA rows.")
+
+    output.to_csv(HEALTH_NTA, index=False)
+    print(
+        f"Built {len(output)} pediatric-asthma NTA rows for {latest_period} "
+        f"in {HEALTH_NTA}"
+    )
+    return output
+
 def _attach_nta_centroids():
     """Add shared polygon-centroid columns to the pediatric-asthma NTA table.
 
@@ -185,15 +274,8 @@ def _attach_nta_centroids():
 
     # Crosswalk source names from the DOHMH asthma table to the shared
     # geography names after _normalized_text() is applied.
-    nta_name_crosswalk = {
-        "chinatown": "chinatown two bridges",
-        "chinatown two bridges": "chinatown two bridges",
-        "lower east side": "lower east side",
-        "east village": "east village",
-    }
-
     health_nta["_nta_key"] = health_nta["nta_name"].map(_normalized_text)
-    health_nta["_nta_key"] = health_nta["_nta_key"].replace(nta_name_crosswalk)
+    health_nta["_nta_key"] = health_nta["_nta_key"].replace(NTA_NAME_CROSSWALK)
 
     nta_polygons["_nta_key"] = nta_polygons["nta_name"].map(_normalized_text)
 
@@ -331,8 +413,11 @@ def validate_existing():
     }
     for p, fields in req.items():
         if not p.exists(): raise FileNotFoundError(p)
-        missing=[x for x in fields if x not in pd.read_csv(p,nrows=3).columns]
+        sample = pd.read_csv(p)
+        missing=[x for x in fields if x not in sample.columns]
         if missing: raise ValueError(f"{p.name} missing {missing}")
+        if p == HEALTH_NTA and sample.empty:
+            raise ValueError(f"{p.name} contains no data rows")
 
 def download_omh():
     RAW.mkdir(parents=True,exist_ok=True)
@@ -666,6 +751,7 @@ def build_life():
 
 def main():
     CLEAN.mkdir(parents=True,exist_ok=True); RAW.mkdir(parents=True,exist_ok=True)
+    build_asthma_nta_table()
     validate_existing()
     assemble_health_table()
     attach_metric_centroids()

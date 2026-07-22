@@ -23,7 +23,6 @@ Render Health-domain maps using the current shared mapping utilities:
 
 ```{python}
 from pathlib import Path
-import html
 import sys
 import yaml
 
@@ -38,10 +37,10 @@ for candidate in [Path.cwd(), *Path.cwd().parents]:
 
 from src.cb3_utils import load_cb3_tract_universe
 from src.map_utils import (
+    add_bubble_layer,
+    add_categorical_point_layer,
     add_demographic_backdrop_layers,
     add_map_title,
-    add_zero_value_legend,
-    build_metric_bubble_map,
     find_project_dir,
     make_base_map,
 )
@@ -318,88 +317,59 @@ mental_health = _read_points(MENTAL_HEALTH_PATH)
 life = pd.read_csv(LIFE_PATH, dtype=str) if LIFE_PATH.exists() else pd.DataFrame()
 
 
-def _popup_text(row, name_fields, address_fields=None, extra_fields=None):
-    name = next(
-        (
-            row.get(field)
-            for field in name_fields
-            if pd.notna(row.get(field)) and str(row.get(field)).strip()
-        ),
-        "Provider site",
-    )
-    parts = [f"<strong>{html.escape(str(name))}</strong>"]
-
-    for field in address_fields or []:
-        value = row.get(field)
-        if pd.notna(value) and str(value).strip():
-            parts.append(html.escape(str(value)))
-            break
-
-    for label, field in extra_fields or []:
-        value = row.get(field)
-        if pd.notna(value) and str(value).strip():
-            parts.append(f"{html.escape(label)}: {html.escape(str(value))}")
-
-    return "<br>".join(parts)
+def _first_available(frame, fields, fallback):
+    """Coalesce possible source-specific label fields for map tooltips."""
+    available = [field for field in fields if field in frame.columns]
+    if not available:
+        return pd.Series(fallback, index=frame.index)
+    labels = frame[available].replace(r"^\s*$", pd.NA, regex=True).bfill(axis=1).iloc[:, 0]
+    return labels.fillna(fallback)
 
 
 def add_provider_layers(map_object, include_fqhc=True, include_mental=False):
     if include_fqhc and not fqhc.empty:
-        layer = folium.FeatureGroup(
-            name=f"FQHC sites (n={len(fqhc)})",
-            show=True,
+        points = fqhc.copy()
+        points["_provider_category"] = "FQHC"
+        points["_provider_label"] = _first_available(
+            points,
+            ["provider_name", "site_name", "facility_name", "provider_label"],
+            "FQHC site",
         )
-        for _, row in fqhc.iterrows():
-            provider_name = (
-                row.get("provider_name")
-                or row.get("site_name")
-                or row.get("facility_name")
-                or "FQHC site"
-            )
-            folium.CircleMarker(
-                [float(row["latitude"]), float(row["longitude"])],
-                radius=5,
-                color="#222222",
-                weight=1,
-                fill=True,
-                fill_color="#ffffff",
-                fill_opacity=0.95,
-                tooltip=str(provider_name),
-                popup=_popup_text(
-                    row,
-                    ["provider_name", "site_name", "facility_name"],
-                    ["full_address", "street_address"],
-                ),
-            ).add_to(layer)
-        layer.add_to(map_object)
+        add_categorical_point_layer(
+            map_object,
+            points,
+            category_col="_provider_category",
+            category_colors={"FQHC": "#ffffff"},
+            name=f"FQHC sites (n={len(fqhc)})",
+            tooltip_fields=["_provider_label"],
+            tooltip_aliases=["Provider"],
+            size=12,
+            outline_color="#222222",
+            show=True,
+            legend_bottom_offset=125,
+        )
 
     if include_mental and not mental_health.empty:
-        layer = folium.FeatureGroup(
-            name=f"Mental-health provider sites (n={len(mental_health)})",
-            show=True,
+        points = mental_health.copy()
+        points["_provider_category"] = "Mental health"
+        points["_provider_label"] = _first_available(
+            points,
+            ["site_name", "facility_name"],
+            "Mental-health provider site",
         )
-        for _, row in mental_health.iterrows():
-            site_name = row.get("site_name") or row.get("facility_name") or "Mental-health provider site"
-            folium.CircleMarker(
-                [float(row["latitude"]), float(row["longitude"])],
-                radius=6,
-                color="#4a1486",
-                weight=1,
-                fill=True,
-                fill_color="#ce93d8",
-                fill_opacity=0.95,
-                tooltip=str(site_name),
-                popup=_popup_text(
-                    row,
-                    ["site_name", "facility_name"],
-                    ["full_address"],
-                    [
-                        ("Programs", "mental_health_program_count"),
-                        ("Program names", "program_names"),
-                    ],
-                ),
-            ).add_to(layer)
-        layer.add_to(map_object)
+        add_categorical_point_layer(
+            map_object,
+            points,
+            category_col="_provider_category",
+            category_colors={"Mental health": "#ce93d8"},
+            name=f"Mental-health provider sites (n={len(mental_health)})",
+            tooltip_fields=["_provider_label"],
+            tooltip_aliases=["Provider"],
+            size=14,
+            outline_color="#4a1486",
+            show=True,
+            legend_bottom_offset=195,
+        )
 ```
 
 ## Map helpers
@@ -414,6 +384,7 @@ def add_health_bubbles(
     label_col="tract_label",
     color="#1a1a1a",
 ):
+    """Validate health point fields, then delegate rendering to map_utils."""
     values = pd.to_numeric(points[metric], errors="coerce")
     valid = points.loc[
         values.notna()
@@ -425,101 +396,25 @@ def add_health_bubbles(
         return map_object
 
     valid[metric] = pd.to_numeric(valid[metric], errors="coerce")
-    max_value = valid[metric].max()
-
-    metric_label = METRIC_SPECS[metric].get("label", metric)
-    unit = METRIC_SPECS[metric].get("unit", "")
-
-    bubble_layer = folium.FeatureGroup(
-        name=f"{metric_label} bubbles",
-        show=True,
+    valid[lat_col] = pd.to_numeric(valid[lat_col], errors="coerce")
+    valid[lon_col] = pd.to_numeric(valid[lon_col], errors="coerce")
+    add_bubble_layer(
+        map_object,
+        valid,
+        value_col=metric,
+        label=METRIC_SPECS[metric].get("label", metric),
+        unit=METRIC_SPECS[metric].get("unit", ""),
+        name=f"{METRIC_SPECS[metric].get('label', metric)} bubbles",
+        lat_col=lat_col,
+        lon_col=lon_col,
+        tooltip_fields=[label_col],
+        tooltip_aliases=["Area"],
+        color=color,
+        outline_color="#777777",
+        min_radius=6,
+        max_radius=28,
+        legend_bottom_offset=35,
     )
-
-    for _, row in valid.iterrows():
-        value = row[metric]
-        radius = 6 + 22 * ((value / max_value) ** 0.5) if max_value and max_value > 0 else 8
-
-        if unit == "%":
-            value_display = f"{value:.1f}%"
-        elif "rate" in metric or "per" in unit:
-            value_display = f"{value:.1f} {unit}"
-        else:
-            value_display = f"{value:.1f} {unit}".strip()
-
-        place_label = row.get(label_col) or row.get("GEOID") or row.get("nta_name") or "Area"
-
-        folium.CircleMarker(
-            location=[float(row[lat_col]), float(row[lon_col])],
-            radius=radius,
-            color="#777777",
-            weight=1,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.75,
-            tooltip=f"{place_label}: {value_display}",
-            popup=f"<strong>{place_label}</strong><br>{metric_label}: {value_display}",
-        ).add_to(bubble_layer)
-
-    bubble_layer.add_to(map_object)
-    return map_object
-
-
-def add_health_bubbles(
-    map_object,
-    points,
-    metric,
-    lat_col="tract_centroid_latitude",
-    lon_col="tract_centroid_longitude",
-    label_col="tract_label",
-    color="#1a1a1a",
-):
-    values = pd.to_numeric(points[metric], errors="coerce")
-    valid = points.loc[
-        values.notna()
-        & pd.to_numeric(points[lat_col], errors="coerce").notna()
-        & pd.to_numeric(points[lon_col], errors="coerce").notna()
-    ].copy()
-
-    if valid.empty:
-        return map_object
-
-    valid[metric] = pd.to_numeric(valid[metric], errors="coerce")
-    max_value = valid[metric].max()
-
-    metric_label = METRIC_SPECS[metric].get("label", metric)
-    unit = METRIC_SPECS[metric].get("unit", "")
-
-    bubble_layer = folium.FeatureGroup(
-        name=f"{metric_label} bubbles",
-        show=True,
-    )
-
-    for _, row in valid.iterrows():
-        value = row[metric]
-        radius = 6 + 22 * ((value / max_value) ** 0.5) if max_value and max_value > 0 else 8
-
-        if unit == "%":
-            value_display = f"{value:.1f}%"
-        elif "rate" in metric or "per" in unit:
-            value_display = f"{value:.1f} {unit}"
-        else:
-            value_display = f"{value:.1f} {unit}".strip()
-
-        place_label = row.get(label_col) or row.get("GEOID") or row.get("nta_name") or "Area"
-
-        folium.CircleMarker(
-            location=[float(row[lat_col]), float(row[lon_col])],
-            radius=radius,
-            color="#777777",
-            weight=1,
-            fill=True,
-            fill_color=color,
-            fill_opacity=0.75,
-            tooltip=f"{place_label}: {value_display}",
-            popup=f"<strong>{place_label}</strong><br>{metric_label}: {value_display}",
-        ).add_to(bubble_layer)
-
-    bubble_layer.add_to(map_object)
     return map_object
 
 
@@ -607,13 +502,21 @@ def save_provider_access_map():
         DEMOGRAPHIC_SPECS,
         none_option_label="No demographic background",
     )
+    add_health_bubbles(
+        map_object,
+        asthma_points,
+        NTA_METRIC,
+        lat_col="nta_centroid_latitude",
+        lon_col="nta_centroid_longitude",
+        label_col="nta_name",
+        color="#1a1a1a",
+    )
     add_provider_layers(map_object, include_fqhc=True, include_mental=True)
     add_map_title(
         map_object,
         "CB3 Health: provider access",
-        "FQHC and mental-health provider locations over selectable demographic backdrop layers.",
+        "Provider locations and NTA-level pediatric asthma rates over selectable demographic backdrop layers.",
     )
-    add_zero_value_legend(map_object, "#ffffff", "FQHC site")
     folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
     map_object.save(output_path)
     print(f"Saved {output_path}")
