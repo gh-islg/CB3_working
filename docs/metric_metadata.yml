@@ -1006,6 +1006,21 @@ food_insecurity_rate_pct:
   display_format: percent
   filename: food_insecurity_by_tract.html
 
+utility_shutoff_risk_pct:
+  domain: economic-security-food
+  short_label: Utility shutoff risk
+  label: Utility shutoff risk
+  description: >
+    Estimated prevalence of utility shutoff risk from CDC PLACES.
+  unit: "%"
+  source: CDC PLACES
+  year: 2025 release
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: utility_shutoff_risk_by_tract.html
+
 food_supply_gap_rank_nta:
   domain: economic-security-food-context
   short_label: Food supply gap rank
@@ -1073,6 +1088,27 @@ n_students_temp_housing:
   map_classification: quintile
   display_format: count
   filename: n_students_temp_housing.html
+
+emergency_food_provider_locations:
+  domain: economic-security-food-points
+  short_label: Emergency food providers
+  dimension: Emergency food provider locations
+  label: Emergency food provider locations
+  description: >
+    Emergency food provider locations shown at exact coordinates when those
+    coordinates are available. When the source is reported only by
+    Neighborhood Tabulation Area, the marker is placed at an in-polygon NTA
+    representative point and the tooltip reports the number of providers
+    represented.
+  unit: providers
+  source: NYC emergency food provider locations
+  year: 2026
+  geography: Point location or NTA representative point
+  higher_is: context
+  map_classification: categorical_points
+  display_format: count
+  category_colors:
+    Emergency food provider: "#7a0177"
 
 prek_seats_2122:
   domain: education
@@ -1205,9 +1241,8 @@ asian_pacific_limited_english_household_share:
   higher_is: context
   map_classification: bubble
   display_format: percent
-  filename: utility_shutoff_risk_by_tract.html
 
-# --- Senior --- 
+# --- Senior ---
 
 
 senior_service_sites:

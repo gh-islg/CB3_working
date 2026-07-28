@@ -23,6 +23,13 @@ Each output map has exactly one primary bubble layer. Supporting metrics stay
 in the clean file and appear in the bubble tooltip, so the maps do not lose
 context while avoiding multiple bubble layers.
 
+Emergency food provider coordinates are loaded from:
+
+`data/clean/emergency_food_providers.csv`
+
+The provider locations are added to the food-insecurity map as a selectable
+categorical point layer using `src.map_utils.add_categorical_point_layer()`.
+
 The notebook does not create or use `map_files/`.
 
 ```{python}
@@ -42,6 +49,7 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from src.map_utils import (
+    add_categorical_point_layer,
     build_metric_bubble_map,
     find_project_dir,
     format_metric_value,
@@ -49,6 +57,7 @@ from src.map_utils import (
 
 PROJECT_DIR = find_project_dir()
 CLEAN_PATH = PROJECT_DIR / "data" / "clean" / "economic-food.csv"
+PROVIDER_PATH = PROJECT_DIR / "data" / "clean" / "emergency_food_providers.csv"
 METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
 OUTPUT_DIR = PROJECT_DIR / "maps" / "economic-food"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -82,6 +91,17 @@ def to_map_spec(meta, include_filename=False):
 
 with open(METADATA_PATH, encoding="utf-8") as f:
     all_metrics = yaml.safe_load(f) or {}
+
+provider_point_spec = all_metrics.get(
+    "emergency_food_provider_locations",
+    {},
+)
+provider_category_colors = provider_point_spec.get(
+    "category_colors",
+    {
+        "Emergency food provider": "#7a0177",
+    },
+)
 
 primary_specs = {
     variable: to_map_spec(meta, include_filename=True)
@@ -164,7 +184,8 @@ MAP_TOPICS = {
         "subtitle": (
             "Bubbles show tract-level food insecurity rate. "
             "Tooltip also shows NTA-level food supply gap rank, score, food-insecure share, "
-            "and supply gap pounds where available. Use the layer control to pick a demographic background."
+            "and supply gap pounds where available. Emergency food provider locations are "
+            "available as a selectable point overlay."
         ),
         "context_metrics": [
             "food_supply_gap_rank_nta",
@@ -276,6 +297,171 @@ for metric in available_demographic_specs:
     print(f"  {metric}: {tracts[metric].notna().sum()} tracts")
 ```
 
+## Load emergency food provider locations
+
+```{python}
+def load_provider_points(path):
+    """Load map-ready provider coordinates created by economic-food/build.py."""
+    if not path.exists():
+        print(
+            "Warning: emergency food provider layer unavailable because "
+            "data/clean/emergency_food_providers.csv was not created. "
+            "The separate raw provider-location source is missing."
+        )
+        return pd.DataFrame(
+            columns=[
+                "provider_name",
+                "address",
+                "provider_subtype",
+                "provider_count",
+                "provider_type",
+                "location_level",
+                "nta_name",
+                "latitude",
+                "longitude",
+            ]
+        )
+
+    providers = pd.read_csv(path, low_memory=False)
+
+    required = {
+        "provider_type",
+        "provider_count",
+        "location_level",
+        "latitude",
+        "longitude",
+    }
+    missing = sorted(required - set(providers.columns))
+    if missing:
+        raise ValueError(
+            "emergency_food_providers.csv is missing required columns: "
+            + ", ".join(missing)
+        )
+
+    providers["latitude"] = pd.to_numeric(
+        providers["latitude"],
+        errors="coerce",
+    )
+    providers["longitude"] = pd.to_numeric(
+        providers["longitude"],
+        errors="coerce",
+    )
+    providers["provider_count"] = pd.to_numeric(
+        providers["provider_count"],
+        errors="coerce",
+    ).fillna(1)
+
+    if "provider_type" not in providers.columns:
+        providers["provider_type"] = "Emergency food provider"
+
+    providers["provider_type"] = (
+        providers["provider_type"]
+        .fillna("Emergency food provider")
+        .astype(str)
+        .str.strip()
+    )
+    providers.loc[
+        providers["provider_type"].eq(""),
+        "provider_type",
+    ] = "Emergency food provider"
+
+    if "provider_name" in providers.columns:
+        providers["provider_name"] = (
+            providers["provider_name"]
+            .fillna("Emergency food provider")
+            .astype(str)
+            .str.strip()
+        )
+
+    if "address" in providers.columns:
+        providers["address"] = providers["address"].fillna("").astype(str).str.strip()
+
+    providers = providers.dropna(
+        subset=["latitude", "longitude"]
+    ).copy()
+
+    if providers.empty:
+        raise ValueError(
+            "emergency_food_providers.csv contains no usable map markers."
+        )
+
+    print(
+        "Emergency food provider points available: "
+        f"{len(providers)}"
+    )
+    return providers
+
+
+providers = load_provider_points(PROVIDER_PATH)
+
+provider_types = sorted(
+    providers["provider_type"].dropna().unique()
+)
+
+unregistered_provider_types = [
+    provider_type
+    for provider_type in provider_types
+    if provider_type not in provider_category_colors
+]
+if unregistered_provider_types:
+    raise KeyError(
+        "Provider types missing from "
+        "emergency_food_provider_locations.category_colors: "
+        + ", ".join(unregistered_provider_types)
+    )
+
+provider_total = int(
+    pd.to_numeric(
+        providers["provider_count"],
+        errors="coerce",
+    ).fillna(1).sum()
+)
+
+if providers.empty:
+    MAP_TOPICS["food_insecurity"]["subtitle"] = (
+        "Bubbles show tract-level food insecurity rate. "
+        "Tooltip also shows NTA-level food supply gap rank, score, "
+        "food-insecure share, and supply gap pounds where available. "
+        "Emergency food provider locations are not shown because the "
+        "separate provider-location source is unavailable."
+    )
+
+
+def add_food_provider_layer(map_object):
+    """Add provider markers before LayerControl is created by map_utils."""
+    if providers.empty:
+        return
+
+    tooltip_fields = []
+    tooltip_aliases = []
+
+    for column, alias in [
+        ("provider_name", "Provider"),
+        ("provider_count", "Providers represented"),
+        ("provider_subtype", "Provider subtype"),
+        ("address", "Address"),
+        ("nta_name", "NTA"),
+        ("location_level", "Location level"),
+    ]:
+        if column in providers.columns:
+            tooltip_fields.append(column)
+            tooltip_aliases.append(alias)
+
+    add_categorical_point_layer(
+        map_object,
+        providers,
+        category_col="provider_type",
+        category_colors=provider_category_colors,
+        name=f"Emergency food providers (n={provider_total})",
+        lat_col="latitude",
+        lon_col="longitude",
+        tooltip_fields=tooltip_fields,
+        tooltip_aliases=tooltip_aliases,
+        size=15,
+        legend_bottom_offset=265,
+    )
+```
+
 ## Add formatted context columns for tooltips
 
 ```{python}
@@ -310,8 +496,17 @@ for topic_name, topic in MAP_TOPICS.items():
         if context_metric in context_display_columns:
             tooltip_fields.append(context_display_columns[context_metric])
             tooltip_aliases.append(
-                available_context_specs.get(context_metric, available_primary_specs.get(context_metric))["label"]
+                available_context_specs.get(
+                    context_metric,
+                    available_primary_specs.get(context_metric),
+                )["label"]
             )
+
+    extra_layers = (
+        add_food_provider_layer
+        if topic_name == "food_insecurity" and not providers.empty
+        else None
+    )
 
     map_object = build_metric_bubble_map(
         tracts=tracts,
@@ -323,6 +518,7 @@ for topic_name, topic in MAP_TOPICS.items():
         output_path=output_path,
         tooltip_fields=tooltip_fields,
         tooltip_aliases=tooltip_aliases,
+        extra_layers=extra_layers,
     )
 
     rendered[topic_name] = {
@@ -354,6 +550,16 @@ summary = pd.DataFrame(
             "label": available_primary_specs[details["metric"]]["label"],
             "html_file": available_primary_specs[details["metric"]]["filename"],
             "tracts_with_data": int(tracts[details["metric"]].notna().sum()),
+            "provider_markers": (
+                len(providers)
+                if topic_name == "food_insecurity"
+                else 0
+            ),
+            "providers_represented": (
+                provider_total
+                if topic_name == "food_insecurity"
+                else 0
+            ),
             "output_exists": details["output_path"].exists(),
             "output_size_bytes": details["output_path"].stat().st_size,
         }
