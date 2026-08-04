@@ -409,19 +409,71 @@ tree_health:
   label: Living street tree health status
   description: >
     Health rating (Good/Fair/Poor) of individual living street trees from the
-    2015 TreesCount census, plotted at each tree's own coordinates rather
-    than a tract statistic (no numeric magnitude to size a bubble by).
+    2015 TreesCount census. Mapped as tract-level counts (tree_count_good,
+    tree_count_fair, tree_count_poor); this entry's category_colors are
+    reused for the tract map's pie-wedge colors.
   category_colors:
     Good: "#238b45"
     Fair: "#fec44f"
     Poor: "#d94701"
   source: 2015 Street Tree Census (NYC Parks)
   year: 2015
-  geography: Individual street tree
+  geography: Individual street tree, aggregated to tract counts
   higher_is: n/a
   map_classification: categorical
   display_format: category
   filename: street_tree_health.html
+
+tree_count_good:
+  domain: environment
+  short_label: Good
+  label: Living street trees rated Good
+  description: >
+    Count of living street trees (2015 TreesCount census) rated Good,
+    aggregated to the census tract. One of three counts (with
+    tree_count_fair, tree_count_poor) drawn as pie-wedge shares of the
+    street tree health tract map.
+  unit: " trees"
+  source: 2015 Street Tree Census (NYC Parks)
+  year: 2015
+  geography: Census tract (aggregated from individual street trees)
+  higher_is: better
+  map_classification: count
+  display_format: count
+
+tree_count_fair:
+  domain: environment
+  short_label: Fair
+  label: Living street trees rated Fair
+  description: >
+    Count of living street trees (2015 TreesCount census) rated Fair,
+    aggregated to the census tract. One of three counts (with
+    tree_count_good, tree_count_poor) drawn as pie-wedge shares of the
+    street tree health tract map.
+  unit: " trees"
+  source: 2015 Street Tree Census (NYC Parks)
+  year: 2015
+  geography: Census tract (aggregated from individual street trees)
+  higher_is: n/a
+  map_classification: count
+  display_format: count
+
+tree_count_poor:
+  domain: environment
+  short_label: Poor
+  label: Living street trees rated Poor
+  description: >
+    Count of living street trees (2015 TreesCount census) rated Poor,
+    aggregated to the census tract. One of three counts (with
+    tree_count_good, tree_count_fair) drawn as pie-wedge shares of the
+    street tree health tract map.
+  unit: " trees"
+  source: 2015 Street Tree Census (NYC Parks)
+  year: 2015
+  geography: Census tract (aggregated from individual street trees)
+  higher_is: worse
+  map_classification: count
+  display_format: count
 
 nycha_residential_building:
   domain: environment

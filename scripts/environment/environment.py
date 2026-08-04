@@ -207,6 +207,23 @@ tree_points = trees_cb3_mapped[
     ["tree_id", "address", "GEOID", "latitude", "longitude", "health", "spc_common"]
 ].copy()
 tree_points.to_csv(TREE_POINTS_PATH, index=False)
+
+# Tract-level tree health counts, for the tract-level pie/bubble map (one
+# donut per tract, sized by total trees, sliced by Good/Fair/Poor share).
+tree_health_metrics = (
+    tree_points.groupby(["GEOID", "health"]).size().unstack(fill_value=0)
+)
+tree_health_metrics = tree_health_metrics.rename(columns={
+    "Good": "tree_count_good",
+    "Fair": "tree_count_fair",
+    "Poor": "tree_count_poor",
+}).reset_index()
+for column in ("tree_count_good", "tree_count_fair", "tree_count_poor"):
+    if column not in tree_health_metrics.columns:
+        tree_health_metrics[column] = 0
+tree_health_metrics = tree_health_metrics[
+    ["GEOID", "tree_count_good", "tree_count_fair", "tree_count_poor"]
+]
 print(f"Wrote {len(tree_points)} alive street tree points to {TREE_POINTS_PATH}")
 #%%
 
@@ -409,7 +426,8 @@ print(
 # zero for tracts with no matching records.
 metric_frames = [
     ej_area_metrics,
-    rodent_insp_metrics
+    rodent_insp_metrics,
+    tree_health_metrics,
 ]
 
 clean = tracts[
@@ -426,7 +444,10 @@ clean = tracts[
 for metric_frame in metric_frames:
     clean = clean.merge(metric_frame, on="GEOID", how="left", validate="one_to_one")
 
-count_columns = ["rodent_active_inspections"]
+count_columns = [
+    "rodent_active_inspections",
+    "tree_count_good", "tree_count_fair", "tree_count_poor",
+]
 clean[count_columns] = clean[count_columns].fillna(0)
 
 # Write geography and data-availability notes to a sidecar log instead of
@@ -446,7 +467,8 @@ log_lines = [
     f"Rodent inspections:    {rodent_insp_unallocated_count} active-result records not allocated to a tract; "
     f"restricted to latest 5 years ({rodent_insp_cutoff_date.strftime('%Y-%m-%d')} to "
     f"{rodent_insp_latest_date.strftime('%Y-%m-%d')})",
-    f"Street trees:          {tree_unallocated_count} Alive CB3-board records not allocated to a tract",
+    f"Street trees:          {tree_unallocated_count} Alive CB3-board records not allocated to a tract; "
+    f"tract-level Good/Fair/Poor counts included in {OUTPUT_PATH.name}",
     f"NYCHA buildings:       {nycha_unallocated_count} MN03 NYCHA violation records not allocated to a tract; "
     f"{len(nycha_building_points)} unique residential buildings (by BBL) from violation records",
     "",
