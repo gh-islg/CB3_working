@@ -921,7 +921,6 @@ utility_shutoff_risk_pct:
 
 # --- Senior --- 
 
-
 senior_service_sites:
   domain: senior
   short_label: Senior service sites
@@ -1166,3 +1165,4 @@ mltfam_walkup_rate:
     - "#feb24c"
     - "#f03b20"
     - "#bd0026"
+
