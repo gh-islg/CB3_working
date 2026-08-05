@@ -38,6 +38,7 @@ for candidate in [Path.cwd(), *Path.cwd().parents]:
 from src.cb3_utils import load_cb3_tract_universe
 from src.map_utils import (
     add_bubble_layer,
+    add_categorical_legend,
     add_categorical_point_layer,
     add_demographic_backdrop_layers,
     add_map_title,
@@ -99,25 +100,15 @@ DEFAULT_HEALTH_METADATA = {
 
 ALL_METRICS = {**DEFAULT_HEALTH_METADATA, **loaded_metric_metadata}
 
-DEFAULT_HEALTH_PALETTE = [
-    "#f7fbff",
-    "#deebf7",
-    "#c6dbef",
-    "#9ecae1",
-    "#6baed6",
-    "#3182bd",
-    "#08519c",
-]
-
-
-def _to_map_spec(meta, include_filename=False, default_palette=DEFAULT_HEALTH_PALETTE):
+def _to_map_spec(meta, include_filename=False):
     """Convert metric_metadata.yml entries into the map_utils spec shape."""
     spec = {
         "dimension": meta.get("short_label", meta.get("label", "")),
         "label": meta.get("label", meta.get("short_label", "")),
         "unit": meta.get("unit", ""),
-        "palette": meta.get("palette", default_palette),
     }
+    if "palette" in meta:
+        spec["palette"] = meta["palette"]
     if include_filename:
         spec["filename"] = meta["filename"]
     for key in ("positive_values_only", "zero_color", "zero_label"):
@@ -186,66 +177,19 @@ DEMOGRAPHIC_COLUMNS = [
     "lep_household_share",
 ]
 
-BASELINE_PROFILE_CANDIDATES = [
-    CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "tract_baseline_profile.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
-    CLEAN_DIR / "demographics_tract.csv",
-    CLEAN_DIR / "demographic_tract.csv",
-    CLEAN_DIR / "demographic_baseline_tract.csv",
-    CLEAN_DIR / "language.csv",
-    CLEAN_DIR / "economic-food.csv",
-]
-
-baseline_profile = pd.DataFrame({"GEOID": sorted(tracts["GEOID"].astype(str).unique())})
-used_baseline_files = []
-
-for path in BASELINE_PROFILE_CANDIDATES:
-    if not path.exists():
-        continue
-
-    candidate = pd.read_csv(path, dtype={"geoid": "string", "GEOID": "string"})
-    if "GEOID" not in candidate.columns:
-        if "geoid" in candidate.columns:
-            candidate = candidate.rename(columns={"geoid": "GEOID"})
-        else:
-            continue
-
-    candidate["GEOID"] = candidate["GEOID"].astype("string").str.zfill(11)
-    candidate = candidate[candidate["GEOID"].isin(baseline_profile["GEOID"])].copy()
-
-    if "poverty_rate" not in candidate.columns and "poverty_rate_pct" in candidate.columns:
-        candidate["poverty_rate"] = candidate["poverty_rate_pct"]
-
-    keep = ["GEOID"] + [
-        column for column in DEMOGRAPHIC_COLUMNS
-        if column in candidate.columns
-    ]
-
-    if len(keep) <= 1:
-        continue
-
-    piece = candidate[keep].drop_duplicates("GEOID").copy()
-    duplicate_columns = [
-        column for column in piece.columns
-        if column != "GEOID" and column in baseline_profile.columns
-    ]
-    piece = piece.drop(columns=duplicate_columns)
-
-    if len(piece.columns) <= 1:
-        continue
-
-    baseline_profile = baseline_profile.merge(piece, on="GEOID", how="left", validate="one_to_one")
-    used_baseline_files.append(path.name)
-
-if used_baseline_files:
-    print("Using demographic context from: " + ", ".join(used_baseline_files))
-else:
-    print("Warning: no demographic clean file found; maps will use the plain outline option only.")
+BASELINE_PROFILE_PATH = CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv"
+if not BASELINE_PROFILE_PATH.exists():
+    raise FileNotFoundError(f"Missing shared demographic baseline: {BASELINE_PROFILE_PATH}")
+baseline_profile = pd.read_csv(
+    BASELINE_PROFILE_PATH, dtype={"geoid": "string", "GEOID": "string"}
+)
+if "GEOID" not in baseline_profile.columns and "geoid" in baseline_profile.columns:
+    baseline_profile = baseline_profile.rename(columns={"geoid": "GEOID"})
+baseline_profile["GEOID"] = baseline_profile["GEOID"].astype("string").str.zfill(11)
+baseline_columns = [column for column in DEMOGRAPHIC_COLUMNS if column in baseline_profile.columns]
 
 tracts = tracts.merge(
-    baseline_profile,
+    baseline_profile[["GEOID", *baseline_columns]],
     on="GEOID",
     how="left",
     validate="one_to_one",
@@ -271,9 +215,9 @@ METRIC_SPECS = {
 }
 
 DEMOGRAPHIC_SPECS = {
-    variable: _to_map_spec(metadata)
-    for variable, metadata in ALL_METRICS.items()
-    if metadata.get("domain") == "demographics"
+    variable: _to_map_spec(ALL_METRICS[variable])
+    for variable in DEMOGRAPHIC_COLUMNS
+    if variable in ALL_METRICS
     and variable in tracts.columns
     and pd.to_numeric(tracts[variable], errors="coerce").notna().any()
 }
@@ -315,10 +259,12 @@ assert not asthma_points.empty, "No pediatric asthma NTA points available. Rerun
 fqhc = _read_points(FQHC_PATH, inside_only=True)
 mental_health = _read_points(MENTAL_HEALTH_PATH)
 life = pd.read_csv(LIFE_PATH, dtype=str) if LIFE_PATH.exists() else pd.DataFrame()
+provider_style = ALL_METRICS["health_provider_sites"]
+provider_colors = provider_style["category_colors"]
+provider_outlines = provider_style["outline_colors"]
 
 
 def _first_available(frame, fields, fallback):
-    """Coalesce possible source-specific label fields for map tooltips."""
     available = [field for field in fields if field in frame.columns]
     if not available:
         return pd.Series(fallback, index=frame.index)
@@ -327,48 +273,54 @@ def _first_available(frame, fields, fallback):
 
 
 def add_provider_layers(map_object, include_fqhc=True, include_mental=False):
+    displayed_categories = {}
+    displayed_count = 0
+
     if include_fqhc and not fqhc.empty:
         points = fqhc.copy()
         points["_provider_category"] = "FQHC"
         points["_provider_label"] = _first_available(
-            points,
-            ["provider_name", "site_name", "facility_name", "provider_label"],
-            "FQHC site",
+            points, ["provider_name", "site_name", "facility_name", "provider_label"], "FQHC site"
         )
         add_categorical_point_layer(
-            map_object,
-            points,
+            map_object, points,
             category_col="_provider_category",
-            category_colors={"FQHC": "#ffffff"},
+            category_colors={"FQHC": provider_colors["FQHC"]},
             name=f"FQHC sites (n={len(fqhc)})",
-            tooltip_fields=["_provider_label"],
-            tooltip_aliases=["Provider"],
-            size=12,
-            outline_color="#222222",
+            tooltip_fields=["_provider_label"], tooltip_aliases=["Provider"],
+            size=12, outline_color=provider_outlines["FQHC"],
+            add_legend=False,
             show=True,
-            legend_bottom_offset=125,
         )
+        displayed_categories["FQHC"] = provider_colors["FQHC"]
+        displayed_count += len(points)
 
     if include_mental and not mental_health.empty:
         points = mental_health.copy()
         points["_provider_category"] = "Mental health"
         points["_provider_label"] = _first_available(
-            points,
-            ["site_name", "facility_name"],
-            "Mental-health provider site",
+            points, ["site_name", "facility_name"], "Mental-health provider site"
         )
         add_categorical_point_layer(
-            map_object,
-            points,
+            map_object, points,
             category_col="_provider_category",
-            category_colors={"Mental health": "#ce93d8"},
+            category_colors={"Mental health": provider_colors["Mental health"]},
             name=f"Mental-health provider sites (n={len(mental_health)})",
-            tooltip_fields=["_provider_label"],
-            tooltip_aliases=["Provider"],
-            size=14,
-            outline_color="#4a1486",
+            tooltip_fields=["_provider_label"], tooltip_aliases=["Provider"],
+            size=14, outline_color=provider_outlines["Mental health"],
+            add_legend=False,
             show=True,
-            legend_bottom_offset=195,
+        )
+        displayed_categories["Mental health"] = provider_colors["Mental health"]
+        displayed_count += len(points)
+
+    if displayed_categories:
+        add_categorical_legend(
+            map_object,
+            f"Health provider sites (n={displayed_count})",
+            displayed_categories,
+            bottom_offset=125,
+            shape="diamond",
         )
 ```
 
@@ -382,9 +334,7 @@ def add_health_bubbles(
     lat_col="tract_centroid_latitude",
     lon_col="tract_centroid_longitude",
     label_col="tract_label",
-    color="#1a1a1a",
 ):
-    """Validate health point fields, then delegate rendering to map_utils."""
     values = pd.to_numeric(points[metric], errors="coerce")
     valid = points.loc[
         values.notna()
@@ -399,26 +349,19 @@ def add_health_bubbles(
     valid[lat_col] = pd.to_numeric(valid[lat_col], errors="coerce")
     valid[lon_col] = pd.to_numeric(valid[lon_col], errors="coerce")
     add_bubble_layer(
-        map_object,
-        valid,
-        value_col=metric,
+        map_object, valid, value_col=metric,
         label=METRIC_SPECS[metric].get("label", metric),
         unit=METRIC_SPECS[metric].get("unit", ""),
         name=f"{METRIC_SPECS[metric].get('label', metric)} bubbles",
-        lat_col=lat_col,
-        lon_col=lon_col,
-        tooltip_fields=[label_col],
-        tooltip_aliases=["Area"],
-        color=color,
-        outline_color="#777777",
-        min_radius=6,
-        max_radius=28,
+        lat_col=lat_col, lon_col=lon_col,
+        tooltip_fields=[label_col], tooltip_aliases=["Area"],
+        min_radius=6, max_radius=28,
         legend_bottom_offset=35,
     )
     return map_object
 
 
-def save_health_bubble_map(metric, title, subtitle=None, providers="fqhc"):
+def save_health_bubble_map(metric, title, subtitle=None):
     output_path = MAP_OUTPUT_DIR / METRIC_SPECS[metric]["filename"]
 
     map_object = make_base_map(tracts)
@@ -437,13 +380,6 @@ def save_health_bubble_map(metric, title, subtitle=None, providers="fqhc"):
         lat_col="tract_centroid_latitude",
         lon_col="tract_centroid_longitude",
         label_col="tract_label",
-        color="#1a1a1a",
-    )
-
-    add_provider_layers(
-        map_object,
-        include_fqhc=providers in {"fqhc", "both"},
-        include_mental=providers in {"mental", "both"},
     )
 
     add_map_title(
@@ -476,10 +412,7 @@ def save_asthma_map():
         lat_col="nta_centroid_latitude",
         lon_col="nta_centroid_longitude",
         label_col="nta_name",
-        color="#1a1a1a",
     )
-
-    add_provider_layers(map_object, include_fqhc=True, include_mental=True)
 
     add_map_title(
         map_object,
@@ -502,20 +435,11 @@ def save_provider_access_map():
         DEMOGRAPHIC_SPECS,
         none_option_label="No demographic background",
     )
-    add_health_bubbles(
-        map_object,
-        asthma_points,
-        NTA_METRIC,
-        lat_col="nta_centroid_latitude",
-        lon_col="nta_centroid_longitude",
-        label_col="nta_name",
-        color="#1a1a1a",
-    )
     add_provider_layers(map_object, include_fqhc=True, include_mental=True)
     add_map_title(
         map_object,
         "CB3 Health: provider access",
-        "Provider locations and NTA-level pediatric asthma rates over selectable demographic backdrop layers.",
+        "FQHC and mental-health provider locations over selectable demographic backdrop layers.",
     )
     folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
     map_object.save(output_path)
@@ -532,7 +456,6 @@ fair_or_poor_map = save_health_bubble_map(
     "fair_or_poor_general_health_pct",
     "CB3 Health: Fair or poor general health",
     subtitle="Bubbles show CDC PLACES tract estimates; tract colors show selectable demographic context.",
-    providers="fqhc",
 )
 fair_or_poor_map
 ```
@@ -544,7 +467,6 @@ diabetes_map = save_health_bubble_map(
     "diagnosed_diabetes_pct",
     "CB3 Health: Diagnosed diabetes",
     subtitle="Bubbles show CDC PLACES tract estimates; tract colors show selectable demographic context.",
-    providers="fqhc",
 )
 diabetes_map
 ```
@@ -556,7 +478,6 @@ uninsured_map = save_health_bubble_map(
     "uninsured_adults_pct",
     "CB3 Health: Uninsured adults",
     subtitle="Bubbles show CDC PLACES tract estimates; tract colors show selectable demographic context.",
-    providers="fqhc",
 )
 uninsured_map
 ```
