@@ -927,6 +927,18 @@ pediatric_asthma_ed_rate:
   display_format: number
   filename: pediatric_asthma_ed_rate.html
 
+health_provider_sites:
+  domain: health
+  short_label: Health provider sites
+  label: Health provider sites
+  map_classification: categorical
+  category_colors:
+    FQHC: "#ffffff"
+    Mental health: "#ce93d8"
+  outline_colors:
+    FQHC: "#222222"
+    Mental health: "#4a1486"
+
 # --- Economic Security & Food ---
 
 safety_net_enrollment_per_capita:
