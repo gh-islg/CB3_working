@@ -19,7 +19,8 @@ representative dimensions:
 1. Rodent inspections (confirmed activity): `rodent_active_inspections`
 2. Street and sidewalk cleanliness: `avg_acceptable_streets_pct`, `avg_acceptable_sidewalks_pct`
 3. Street tree health: individual living street trees (2015 TreesCount census)
-   colored by health status (Good/Fair/Poor)
+   aggregated to tract-level counts, shown as one pie-bubble per tract
+   sized by total tree count and sliced by Good/Fair/Poor share
 4. Hurricane evaluation zones: these are overlaid with NYCHA housing and subsidized units at risk
 5. EJ Area designation: `ej_area_flag` (shown as a hatched overlay on every map)
 6. Fine particulate matter (PM2.5): NYCCAS modeled annual average, Dec 2023-Dec 2024,
@@ -30,9 +31,10 @@ selectable demographic choropleth base layers. Rodent inspections are point
 events with native building coordinates, so their bubbles plot at each
 building's own address. Street and sidewalk cleanliness are reported at the
 DSNY cleaning section level, not census tract, so their bubbles sit at each
-section's centroid instead. Street tree health has no magnitude to size by —
-each tree is plotted at its own coordinates as a fixed-size marker colored by
-category instead of a bubble. Map HTML files are written to `maps/environment/`.
+section's centroid instead. Street tree health is aggregated to tract-level
+Good/Fair/Poor counts and plotted as one donut-style bubble per tract,
+centered on the tract centroid, sized by total tree count and sliced into
+wedges by health-status share. Map HTML files are written to `maps/environment/`.
 
 ```{python}
 # Import packages for tract data, geometry, classification, and interactive maps.
@@ -60,6 +62,7 @@ from src.map_utils import (
     add_demographic_backdrop_layers,
     add_map_title,
     add_zero_value_legend,
+    build_grouped_bubble_map,
     build_metric_bubble_map,
     find_project_dir,
     make_base_map,
@@ -78,7 +81,6 @@ BASELINE_PROFILE_PATH = (
 RODENT_INSPECTION_POINTS_PATH = (
     PROJECT_DIR / "data" / "clean" / "environment_rodent_inspection_points.csv"
 )
-TREE_POINTS_PATH = PROJECT_DIR / "data" / "clean" / "environment_tree_points.csv"
 NYCHA_BUILDING_POINTS_PATH = (
     PROJECT_DIR / "data" / "clean" / "environment_nycha_building_points.csv"
 )
@@ -172,16 +174,6 @@ tracts = tracts.merge(
 # to a tract centroid) and attach tract/NTA labels for tooltips.
 rodent_insp_points = pd.read_csv(RODENT_INSPECTION_POINTS_PATH, dtype={"GEOID": "string"})
 rodent_insp_points = rodent_insp_points.merge(
-    tracts[["GEOID", "tract_label", "nta_name"]],
-    on="GEOID",
-    how="left",
-    validate="many_to_one",
-)
-
-# Read individual living street tree points (native lat/lon) and attach
-# tract/NTA labels for tooltips.
-tree_points = pd.read_csv(TREE_POINTS_PATH, dtype={"GEOID": "string"})
-tree_points = tree_points.merge(
     tracts[["GEOID", "tract_label", "nta_name"]],
     on="GEOID",
     how="left",
@@ -461,45 +453,48 @@ show_map(MAP_OUTPUT_DIR / SECTION_METRIC_SPECS["avg_acceptable_sidewalks_pct"]["
 ### Street tree health
 
 ```{python}
-# Living street trees are colored by health status rather than sized by
-# magnitude, so each color is a fixed marker fill rather than a legend tied
-# to bubble size. Colors and output filename are registered in
-# metric_metadata.yml (category_colors) rather than hardcoded here.
+# Living street trees are aggregated to tract-level Good/Fair/Poor counts
+# (tree_count_good/fair/poor, already columns on tracts via environment_tract.csv)
+# and drawn as one donut-style bubble per tract: total size = total tree
+# count, wedge shares = health-status split. Colors and output filename are
+# registered in metric_metadata.yml (tree_health's category_colors/filename)
+# rather than hardcoded here.
 TREE_HEALTH_COLORS = ALL_METRICS["tree_health"]["category_colors"]
 TREE_HEALTH_OUTPUT_PATH = MAP_OUTPUT_DIR / ALL_METRICS["tree_health"]["filename"]
+TREE_HEALTH_METRICS = ["tree_count_good", "tree_count_fair", "tree_count_poor"]
 
+# Ad hoc specs (dimension/label/unit only, no palette/filename) since these
+# three counts feed one combined pie layer rather than individual choropleth
+# bubble maps, so they're deliberately excluded from METRIC_SPECS above.
+TREE_HEALTH_METRIC_SPECS = {
+    var: {
+        "dimension": ALL_METRICS[var]["short_label"],
+        "label": ALL_METRICS[var]["label"],
+        "unit": ALL_METRICS[var]["unit"],
+    }
+    for var in TREE_HEALTH_METRICS
+}
+for metric in TREE_HEALTH_METRICS:
+    assert metric in tracts.columns, f"{metric} missing from tracts"
 
-def create_tree_health_map():
-    # No numeric metric to bubble here (each tree is a single point, not a
-    # magnitude), so this is built directly from the generic layer helpers
-    # rather than build_metric_bubble_map.
-    map_object = make_base_map(tracts)
-    add_demographic_backdrop_layers(map_object, tracts, DEMOGRAPHIC_SPECS)
-    add_ej_overlay(map_object, show=False)
-    add_categorical_point_layer(
-        map_object,
-        tree_points,
-        "health",
-        TREE_HEALTH_COLORS,
-        name="Street trees (health)",
-        tooltip_fields=["spc_common", "address", "tract_label"],
-        tooltip_aliases=["Species", "Address", "Census tract"],
-        show=True,
-    )
-    add_zero_value_legend(map_object, "#d9d9d9", "Demographic data not available")
-    add_map_title(
-        map_object,
-        "CB3 Environmental Conditions: Street Tree Health",
+# Living street trees have no per-tree magnitude to bubble by, so counts are
+# aggregated to the tract level and shown as one pie-sliced bubble per tract
+# instead of one marker per tree.
+tree_health_map = build_grouped_bubble_map(
+    tracts, TREE_HEALTH_METRIC_SPECS, DEMOGRAPHIC_SPECS, TREE_HEALTH_METRICS,
+    title="CB3 Environmental Conditions: Street Tree Health",
+    subtitle=(
         "Choropleth: use the layer control to pick a demographic fill. "
-        "Points: living street trees (2015 TreesCount census), colored by health status.",
-    )
-    folium.LayerControl(collapsed=False, position="topright").add_to(map_object)
-    map_object.save(TREE_HEALTH_OUTPUT_PATH)
-    return map_object
-
-# Living street trees have no magnitude to bubble by, so each tree is plotted
-# at its own coordinates as a fixed-size marker colored by health status.
-tree_health_map = create_tree_health_map()
+        "Bubbles: total living street trees (2015 TreesCount census) per tract, "
+        "sliced by Good/Fair/Poor share."
+    ),
+    output_path=TREE_HEALTH_OUTPUT_PATH,
+    combine_as_pie=True,
+    pie_name="Street trees (health)",
+    pie_legend_title="Tree health",
+    pie_colors=list(TREE_HEALTH_COLORS.values()),
+    extra_layers=lambda m: add_ej_overlay(m, show=False),
+)
 show_map(TREE_HEALTH_OUTPUT_PATH)
 ```
 
