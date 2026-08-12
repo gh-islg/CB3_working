@@ -26,6 +26,7 @@ import yaml
 from shapely import wkt
 
 from src.map_utils import (
+    add_categorical_legend,
     add_categorical_point_layer,
     add_demographic_backdrop_layers,
     add_map_title,
@@ -40,6 +41,7 @@ PROJECT_DIR = find_project_dir()
 CLEAN = PROJECT_DIR / "data" / "clean"
 OUTPUT_DIR = PROJECT_DIR / "maps" / "senior"
 METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
+BASELINE_PATH = CLEAN / "cb3_tract_baseline_profile_clean.csv"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -57,6 +59,28 @@ metadata = yaml.safe_load(METADATA_PATH.read_text()) or {}
 senior = pd.read_csv(senior_path, dtype={"GEOID": str}, low_memory=False)
 senior["geometry"] = senior["geometry_wkt"].map(wkt.loads)
 tracts = gpd.GeoDataFrame(senior, geometry="geometry", crs="EPSG:4326")
+
+if not BASELINE_PATH.exists():
+    raise FileNotFoundError(f"Missing shared demographic baseline: {BASELINE_PATH}")
+baseline = pd.read_csv(BASELINE_PATH, dtype={"GEOID": str, "geoid": str})
+if "GEOID" not in baseline.columns and "geoid" in baseline.columns:
+    baseline = baseline.rename(columns={"geoid": "GEOID"})
+baseline["GEOID"] = baseline["GEOID"].astype(str).str.zfill(11)
+senior_demographic_columns = [
+    "median_household_income", "age_0_to_19_share", "age_20_to_64_share",
+    "age_65_plus_share", "white_non_hispanic_share",
+    "black_non_hispanic_share", "asian_non_hispanic_share",
+    "hispanic_share", "poverty_rate", "senior_poverty_rate",
+    "lep_household_share",
+]
+available_baseline_columns = [
+    column for column in senior_demographic_columns if column in baseline.columns
+]
+tracts = tracts.drop(columns=available_baseline_columns, errors="ignore").merge(
+    baseline[["GEOID", *available_baseline_columns]],
+    on="GEOID", how="left", validate="one_to_one",
+)
+tracts = gpd.GeoDataFrame(tracts, geometry="geometry", crs="EPSG:4326")
 
 facilities = pd.read_csv(facilities_path, dtype={"GEOID": str}, low_memory=False)
 crashes = pd.read_csv(crashes_path, dtype={"GEOID": str}, low_memory=False)
@@ -94,6 +118,7 @@ numeric_columns = [
     "asian_non_hispanic_share",
     "hispanic_share",
     "poverty_rate",
+    "senior_poverty_rate",
     "lep_household_share",
 ]
 for column in numeric_columns:
@@ -163,11 +188,11 @@ facilities_for_map = facilities[
 ].copy()
 
 service_layers = [
-    ("NORC", "NORCs", 35),
-    ("Older Adult Center", "Older Adult Centers", 105),
+    ("NORC", "NORCs"),
+    ("Older Adult Center", "Older Adult Centers"),
 ]
 
-for facility_type, layer_label, legend_offset in service_layers:
+for facility_type, layer_label in service_layers:
     sites = facilities_for_map[
         facilities_for_map["facility_type"].eq(facility_type)
     ].copy()
@@ -189,7 +214,21 @@ for facility_type, layer_label, legend_offset in service_layers:
         tooltip_fields=["facility_name", "facility_address"],
         tooltip_aliases=["Facility", "Address"],
         size=15,
-        legend_bottom_offset=legend_offset,
+        add_legend=False,
+    )
+
+displayed_service_categories = {
+    category: color
+    for category, color in service_category_colors.items()
+    if category in set(facilities_for_map["facility_type"])
+}
+if displayed_service_categories:
+    add_categorical_legend(
+        service_map,
+        f"Senior service sites (n={len(facilities_for_map)})",
+        displayed_service_categories,
+        bottom_offset=125,
+        shape="diamond",
     )
 
 add_map_title(
@@ -253,7 +292,7 @@ else:
             tooltip_fields=["crash_date", "intersection", "PERSON_AGE", "PERSON_INJURY"],
             tooltip_aliases=["Crash date", "Location", "Age", "Injury"],
             size=10,
-            legend_bottom_offset=35,
+            add_legend=False,
         )
 
     if not fatalities.empty:
@@ -268,7 +307,7 @@ else:
             tooltip_fields=["crash_date", "intersection", "PERSON_AGE", "PERSON_INJURY"],
             tooltip_aliases=["Crash date", "Location", "Age", "Injury"],
             size=20,
-            legend_bottom_offset=135,
+            add_legend=False,
         )
 
 if not top_intersections.empty:
@@ -284,7 +323,31 @@ if not top_intersections.empty:
         tooltip_fields=["label"],
         tooltip_aliases=["Intersection"],
         size=22,
-        legend_bottom_offset=235,
+        add_legend=False,
+    )
+
+combined_pedestrian_colors = {
+    **pedestrian_category_colors,
+    **top_intersection_category_colors,
+}
+displayed_pedestrian_categories = {
+    category: color
+    for category, color in combined_pedestrian_colors.items()
+    if (
+        category in set(crashes.get("incident_type", pd.Series(dtype=str)).dropna())
+        or (
+            category == "Top senior pedestrian crash intersection"
+            and not top_intersections.empty
+        )
+    )
+}
+if displayed_pedestrian_categories:
+    add_categorical_legend(
+        pedestrian_map,
+        f"Senior pedestrian safety points (n={len(crashes) + len(top_intersections)})",
+        displayed_pedestrian_categories,
+        bottom_offset=125,
+        shape="diamond",
     )
 
 fatality_count = int(crashes["fatality"].sum()) if "fatality" in crashes.columns and not crashes.empty else 0
@@ -298,6 +361,39 @@ folium.LayerControl(collapsed=False, position="topright").add_to(pedestrian_map)
 pedestrian_map.save(pedestrian_output)
 
 print(f"Saved: {pedestrian_output.relative_to(PROJECT_DIR)}")
+```
+
+## Overall and senior poverty
+
+```{python}
+overall_senior_poverty_metric = "senior_poverty_rate"
+
+if (
+    overall_senior_poverty_metric not in tracts.columns
+    or tracts[overall_senior_poverty_metric].notna().sum() == 0
+):
+    print(f"Warning: {overall_senior_poverty_metric} is unavailable.")
+elif overall_senior_poverty_metric not in metadata:
+    print(f"Warning: {overall_senior_poverty_metric} is missing from docs/metric_metadata.yml.")
+else:
+    overall_senior_poverty_output = (
+        OUTPUT_DIR / metadata[overall_senior_poverty_metric]["filename"]
+    )
+    build_metric_bubble_map(
+        tracts=tracts,
+        metric_specs={
+            overall_senior_poverty_metric: metadata[overall_senior_poverty_metric]
+        },
+        demographic_specs=demographic_specs,
+        metric=overall_senior_poverty_metric,
+        title="CB3 Seniors: Overall and senior poverty",
+        subtitle=(
+            "Background: selectable demographic layer, including overall poverty rate. "
+            "Bubbles: poverty rate among residents age 65+."
+        ),
+        output_path=overall_senior_poverty_output,
+    )
+    print(f"Saved: {overall_senior_poverty_output.relative_to(PROJECT_DIR)}")
 ```
 
 ## Senior poverty by race
@@ -430,6 +526,7 @@ display(summary)
 expected = {
     "senior_service_supply.html",
     "senior_pedestrian_safety.html",
+    "senior_poverty_overall.html",
     "senior_poverty_asian.html",
     "senior_poverty_black.html",
     "senior_poverty_hispanic.html",
