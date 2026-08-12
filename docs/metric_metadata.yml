@@ -1061,6 +1061,18 @@ white_nh_senior_poverty_rate_60plus:
     - "#238b45"
     - "#00441b"
 
+senior_lep_65plus:
+  # Container/parent entry for the 4-language LEP donut below. This metric has
+  # no CSV column of its own — build_bubbles' pie handling sizes the donut by
+  # the SUM of the 4 wedge columns (spanish/other_indo_european/asian_pacific/
+  # other_languages), never reading a "senior_lep_65plus" value. It exists
+  # purely so pie_overrides has a parent whose short_label/dimension supply
+  # the donut's dropdown label and optgroup ("every metric needs an entry").
+  domain: senior
+  short_label: Senior limited English proficiency
+  dimension: Senior limited English proficiency
+  unit: "%"
+
 spanish_senior_lep_rate_65plus:
   domain: senior
   short_label: Spanish-speaking senior LEP
