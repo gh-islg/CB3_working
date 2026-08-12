@@ -7,6 +7,8 @@ import folium
 import numpy as np
 import pandas as pd
 from folium.features import GeoJsonPopup, GeoJsonTooltip
+import json
+from pathlib import Path
 
 
 def find_project_dir(required_dirs=("data", "docs")):
@@ -134,7 +136,7 @@ def add_metric_layer(
     metric,
     spec,
     show=True,
-    add_legend=True,
+    add_legend=False,
     overlay=True,
     on_each_feature=None,
 ):
@@ -222,7 +224,7 @@ def add_metric_layer(
                 spec.get("zero_label", "Zero"),
             )
 
-    return layer
+    return layer, colormap
 
 
 def add_tract_outline_layer(
@@ -277,6 +279,65 @@ def add_tract_outline_layer(
     layer.add_to(map_object)
     return layer
 
+def _step_colormap_intervals(colormap):
+    """Return (color, low, high) for each interval of a StepColormap, using the
+    interval midpoint to look up its color."""
+    breaks = colormap.index
+    return [
+        (colormap.rgb_hex_str((breaks[i] + breaks[i + 1]) / 2), breaks[i], breaks[i + 1])
+        for i in range(len(breaks) - 1)
+    ]
+
+
+def add_demographic_legend(map_object, legend_id, spec, colormap, visible):
+    """Add one swatch-style legend box for a demographic backdrop layer.
+
+    Multiple demographic legends share the same fixed position on the map;
+    only one is shown at a time (`visible` sets the initial state, and the
+    JS wired up in `add_demographic_backdrop_layers` toggles between them as
+    the viewer switches the selected demographic layer).
+    """
+    unit = spec["unit"]
+    rows_html = "".join(
+        f"""
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+          <span style="display:inline-block;width:14px;height:14px;margin-right:2px;
+                       background:{color};border:1px solid #777;"></span>
+          <span>{format_metric_value(low, unit)} - {format_metric_value(high, unit)}</span>
+        </div>
+        """
+        for color, low, high in _step_colormap_intervals(colormap)
+    )
+    if spec.get("positive_values_only"):
+        zero_color = spec.get("zero_color", "#d9d9d9")
+        zero_label = spec.get("zero_label", "Zero")
+        rows_html += f"""
+        <div style="display:flex;align-items:center;gap:8px;margin:4px 0;">
+          <span style="display:inline-block;width:14px;height:14px;margin-right:2px;
+                       background:{zero_color};border:1px solid #777;"></span>
+          <span>{zero_label}</span>
+        </div>
+        """
+    legend_html = f"""
+    <div id="{legend_id}" class="demographic-legend" style="
+        display:{'block' if visible else 'none'};
+        position: fixed;
+        bottom: 245px;
+        right: 20px;
+        z-index: 9999;
+        background: rgba(255,255,255,0.94);
+        border: 1px solid #777;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font: 12px Arial, sans-serif;
+        color: #222;">
+      <div style="font-weight:700;margin-bottom:4px;">{spec['label']}</div>
+      {rows_html}
+    </div>
+    """
+    map_object.get_root().html.add_child(folium.Element(legend_html))
+
+
 
 def add_demographic_backdrop_layers(
     map_object, tracts, demographic_specs, none_option_label="No demographic background"
@@ -298,14 +359,50 @@ def add_demographic_backdrop_layers(
     none_option_label : str
         Layer-control label for the no-fill tract-outline option.
     """
+    # Track each demographic legend's div id by layer name so the toggle
+    # script below can show only the one matching the active radio layer.
+    legend_ids_by_dimension = {}
+
     for index, demographic in enumerate(demographic_specs):
-        add_metric_layer(
-            map_object, tracts, demographic, demographic_specs[demographic],
-            show=index == 0, add_legend=False, overlay=False,
+        spec = demographic_specs[demographic]
+        layer, colormap = add_metric_layer(
+            map_object,
+            tracts,
+            demographic,
+            spec,
+            show=index == 0,
+            overlay=False,
         )
+
+        legend_id = f"demo-legend-{index}"
+        add_demographic_legend(map_object, legend_id, spec, colormap, visible=index == 0)
+        legend_ids_by_dimension[spec["dimension"]] = legend_id
+
     add_tract_outline_layer(
         map_object, tracts, name=none_option_label, show=False, control=True, overlay=False,
     )
+
+    # Only one demographic legend should be visible at a time. Leaflet fires
+    # 'baselayerchange' on the map when the selected radio layer changes,
+    # with e.name set to the layer-control label (== spec["dimension"]).
+    toggle_script = f"""
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {{
+            var legendIdsByLayerName = {json.dumps(legend_ids_by_dimension)};
+            {map_object.get_name()}.on('baselayerchange', function(e) {{
+                document.querySelectorAll('.demographic-legend').forEach(function(el) {{
+                    el.style.display = 'none';
+                }});
+                var legendId = legendIdsByLayerName[e.name];
+                if (legendId) {{
+                    var legendEl = document.getElementById(legendId);
+                    if (legendEl) {{ legendEl.style.display = 'block'; }}
+                }}
+            }});
+        }});
+        </script>
+        """
+    map_object.get_root().html.add_child(folium.Element(toggle_script))
 
 
 def add_bubble_layer(

@@ -491,10 +491,158 @@ hurricane_evacuation_zone:
   display_format: category
   filename: hurricane_evacuation_zones.html
 
+# --- Public Services ---
+
+park_footprint:
+  domain: public_service
+  short_label: Park footprint
+  label: Park property boundary
+  description: >
+    Real park property boundary polygons (not centroid points), shown as a
+    plain outline/fill. Tooltip lists the park's category and recorded
+    facility types.
+  unit: ""
+  fill_color: "#1a1a1a"
+  outline_color: "#ffffff"
+  source: NYC Parks Properties dataset (OpenData)
+  year: 2026
+  geography: Individual park property (polygon)
+  higher_is: context
+  map_classification: outline
+  display_format: none
+  filename: park_facility_inventory.html
+
+park_facility_inventory:
+  domain: public_service
+  short_label: Park facility inventory
+  label: Park facility type
+  description: >
+    Individual facility-type icons inside each park's real footprint
+    (basketball court, other court, baseball/softball field, pool, football
+    field, running track, soccer field, tennis court, playground, dog run).
+    A park with more than one facility type has its icons spread around a
+    small ring rather than stacked at one point. Pickleball courts,
+    chess/game tables, and skate parks are not columns in the source
+    facility inventory and are not represented here.
+  unit: ""
+  category_colors:
+    Basketball court: "#e6194b"
+    Other court: "#3cb44b"
+    Baseball/softball field: "#4363d8"
+    Pool: "#42d4f4"
+    Football field: "#f58231"
+    Running track: "#911eb4"
+    Soccer field: "#469990"
+    Tennis court: "#9a6324"
+    Playground: "#000075"
+    Dog run: "#808000"
+  source: NYC Parks Facilities dataset (OpenData)
+  year: 2026
+  geography: Individual facility icon inside its park polygon
+  higher_is: context
+  map_classification: categorical
+  display_format: category
+  filename: park_facility_inventory.html
+
+subway_access_pct:
+  domain: public_service
+  short_label: Subway access
+  label: Tract area within ¼ mile of a subway entrance
+  description: >
+    Percent of tract area within a quarter mile of an MTA subway station
+    entrance. Entrances were filtered to the CB3 bounding box in the source
+    file, so a small number of entrances just outside CB3 may still
+    contribute to accessibility along the district's edge. Computed but not
+    mapped on its own; shown as a tooltip field on the public transportation
+    access donut-marker map instead.
+  unit: "%"
+  source: MTA Subway Entrances and Exits (NYC OpenData)
+  year: 2024
+  geography: Census tract (¼-mile buffer from entrance point)
+  higher_is: better
+  map_classification: tooltip
+  display_format: percent
+  filename: context_only.html
+
+subway_entrance_count:
+  domain: public_service
+  short_label: Subway entrances
+  label: Subway station entrances
+  description: >
+    Count of MTA subway station entrances located within the tract, shown
+    as one wedge of the public transportation access donut marker.
+  unit: " stops"
+  source: MTA Subway Entrances and Exits (NYC OpenData)
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: pie_bubble
+  display_format: count
+  filename: public_transportation_access.html
+
+bus_stop_count:
+  domain: public_service
+  short_label: Bus stops
+  label: MTA bus stops
+  description: >
+    Count of MTA bus stops located within the tract, shown as one wedge of
+    the public transportation access donut marker.
+  unit: " stops"
+  source: MTA Bus Stops (NYC OpenData)
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: pie_bubble
+  display_format: count
+  filename: public_transportation_access.html
+
+transit_stop_points:
+  domain: public_service
+  short_label: Transit stops
+  label: Transit stop type
+  description: >
+    Individual subway station entrances and bus stops, plotted at their own
+    coordinates rather than aggregated to a tract pie bubble. Added alongside
+    the tract-level donut marker map as an alternate, less-aggregated view.
+  unit: ""
+  category_colors:
+    Subway entrance: "#252525"
+    Bus stop: "#db3232"
+  source: MTA Subway Entrances and Exits (NYC OpenData); MTA Bus Stops (NYC OpenData)
+  year: 2024
+  geography: Individual subway entrance or bus stop (point)
+  higher_is: context
+  map_classification: categorical
+  display_format: category
+  filename: public_transportation_points.html
+
+public_restrooms:
+  domain: public_service
+  short_label: Public restrooms
+  label: Public restroom status and accessibility
+  description: >
+    Individual public restrooms (parks and NYPL library branches), colored by
+    operational status and, if operational, ADA accessibility. Not listed in
+    CB3_Data_Reference_by_Domain_v4.csv's Public Services rows; included as a
+    standalone map from the available clean data.
+  unit: ""
+  category_colors:
+    Fully Accessible: "#238b45"
+    Not Accessible: "#d94701"
+    Accessibility not reported: "#969696"
+    Not operational or closed for construction: "#252525"
+  source: NYC public restroom locations (parks and NYPL branches)
+  year: 2026
+  geography: Individual restroom (point)
+  higher_is: context
+  map_classification: categorical
+  display_format: category
+  filename: public_restrooms.html
+
 # --- Demographics (baseline context, not domain outcomes) ---
 
 median_household_income:
-  domain: senior-context
+  domain: demographics 
   short_label: Median household income
   dimension: Median household income
   label: Median household income
@@ -508,14 +656,14 @@ median_household_income:
   display_format: currency
   filename: context_only.html
   palette:
-    - "#f7fcf0"
-    - "#ccebc5"
-    - "#7bccc4"
-    - "#2b8cbe"
-    - "#084081"
+    - "#f7fcf5"
+    - "#c7e9c0"
+    - "#74c476"
+    - "#238b45"
+    - "#00441b"
 
 age_0_to_19_share:
-  domain: senior-context
+  domain: demographics
   short_label: Age 0-19
   dimension: Age 0-19
   label: Age 0-19
@@ -530,13 +678,13 @@ age_0_to_19_share:
   filename: context_only.html
   palette:
     - "#f7fbff"
-    - "#deebf7"
     - "#c6dbef"
     - "#6baed6"
     - "#2171b5"
+    - "#08306b"
 
 age_20_to_64_share:
-  domain: senior-context
+  domain: demographics
   short_label: Age 20-64
   dimension: Age 20-64
   label: Age 20-64
@@ -551,13 +699,13 @@ age_20_to_64_share:
   filename: context_only.html
   palette:
     - "#f7fbff"
-    - "#deebf7"
     - "#c6dbef"
     - "#6baed6"
     - "#2171b5"
+    - "#08306b"
 
 age_65_plus_share:
-  domain: senior-context
+  domain: demographics
   short_label: Age 65+
   dimension: Age 65+
   label: Age 65+
@@ -571,14 +719,14 @@ age_65_plus_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#fff7ec"
-    - "#fee8c8"
-    - "#fdbb84"
-    - "#e34a33"
-    - "#b30000"
+    - "#f7fbff"
+    - "#c6dbef"
+    - "#6baed6"
+    - "#2171b5"
+    - "#08306b"
 
 white_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: White non-Hispanic share
   dimension: White non-Hispanic share
   label: White non-Hispanic share
@@ -592,14 +740,14 @@ white_non_hispanic_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7f4f9"
+    - "#d4b9da"
+    - "#df65b0"
+    - "#ce1256"
+    - "#67001f"
 
 black_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Black non-Hispanic share
   dimension: Black non-Hispanic share
   label: Black non-Hispanic share
@@ -613,14 +761,14 @@ black_non_hispanic_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7f4f9"
+    - "#d4b9da"
+    - "#df65b0"
+    - "#ce1256"
+    - "#67001f"
 
 asian_non_hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Asian non-Hispanic share
   dimension: Asian non-Hispanic share
   label: Asian non-Hispanic share
@@ -634,14 +782,14 @@ asian_non_hispanic_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7f4f9"
+    - "#d4b9da"
+    - "#df65b0"
+    - "#ce1256"
+    - "#67001f"
 
 hispanic_share:
-  domain: senior-context
+  domain: demographics
   short_label: Hispanic share
   dimension: Hispanic share
   label: Hispanic share
@@ -655,14 +803,14 @@ hispanic_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fbff"
-    - "#deebf7"
-    - "#c6dbef"
-    - "#6baed6"
-    - "#2171b5"
+    - "#f7f4f9"
+    - "#d4b9da"
+    - "#df65b0"
+    - "#ce1256"
+    - "#67001f"
 
 poverty_rate:
-  domain: senior-context
+  domain: demographics
   short_label: Poverty rate
   dimension: Poverty rate
   label: Poverty rate
@@ -676,11 +824,11 @@ poverty_rate:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#fff7ec"
-    - "#fee8c8"
-    - "#fdbb84"
-    - "#e34a33"
-    - "#b30000"
+    - "#ffffcc"
+    - "#ffeda0"
+    - "#feb24c"
+    - "#f03b20"
+    - "#bd0026"
 
 senior_poverty_rate:
   domain: demographics
@@ -697,7 +845,7 @@ senior_poverty_rate:
   display_format: percent
 
 lep_household_share:
-  domain: senior-context
+  domain: demographics
   short_label: Limited-English-proficient households
   dimension: Limited-English-proficient households
   label: Limited-English-proficient households
@@ -711,11 +859,11 @@ lep_household_share:
   display_format: percent
   filename: context_only.html
   palette:
-    - "#f7fcf5"
-    - "#e5f5e0"
-    - "#a1d99b"
-    - "#31a354"
-    - "#006d2c"
+    - "#f2f0f7"
+    - "#cbc9e2"
+    - "#9e9ac8"
+    - "#756bb1"
+    - "#54278f"
 
 # --- Health ---
 
@@ -778,6 +926,18 @@ pediatric_asthma_ed_rate:
   map_classification: bubble
   display_format: number
   filename: pediatric_asthma_ed_rate.html
+
+health_provider_sites:
+  domain: health
+  short_label: Health provider sites
+  label: Health provider sites
+  map_classification: categorical
+  category_colors:
+    FQHC: "#ffffff"
+    Mental health: "#ce93d8"
+  outline_colors:
+    FQHC: "#222222"
+    Mental health: "#4a1486"
 
 # --- Economic Security & Food ---
 
@@ -919,7 +1079,198 @@ utility_shutoff_risk_pct:
   display_format: percent
   filename: utility_shutoff_risk_by_tract.html
 
-# --- Senior --- 
+# --- Education ---
+
+pta_tot_inc:
+  domain: education
+  short_label: PTA fundraising
+  label: Total PTA income, per school
+  description: >
+    Reported total PTA income (pta_tot_inc) at each individual public school,
+    plotted at the school's own coordinates rather than summed to the tract,
+    since PTA fundraising is a property of a specific school's community, not
+    a tract.
+  unit: "$"
+  palette: ["#f7fcf5", "#c7e9c0", "#74c476", "#238b45", "#00441b"]
+  source: NYC PTA financial reporting 2024–25, joined to LCGMS school locator
+  year: 2025
+  geography: School point (native coordinates)
+  map_classification: quintile
+  display_format: dollar
+  filename: pta_fundraising.html
+
+n_students_temp_housing:
+  domain: education
+  short_label: Students in temporary housing
+  label: Students in temporary housing, per school
+  description: >
+    Reported count of students in temporary housing (n_students_temp_housing)
+    at each individual public school, plotted at the school's own
+    coordinates rather than summed to the tract.
+  unit: " students"
+  palette: ["#fff5eb", "#fdd0a2", "#fd8d3c", "#d94801", "#7f2704"]
+  source: NYC DOE Students in Temporary Housing report 2025, joined to LCGMS school locator
+  year: 2025
+  geography: School point (native coordinates)
+  higher_is: worse
+  map_classification: quintile
+  display_format: count
+  filename: n_students_temp_housing.html
+
+emergency_food_provider_locations:
+  domain: economic-security-food-points
+  short_label: Emergency food providers
+  dimension: Emergency food provider locations
+  label: Emergency food provider locations
+  description: >
+    Emergency food provider locations shown at exact coordinates when those
+    coordinates are available. When the source is reported only by
+    Neighborhood Tabulation Area, the marker is placed at an in-polygon NTA
+    representative point and the tooltip reports the number of providers
+    represented.
+  unit: providers
+  source: NYC emergency food provider locations
+  year: 2026
+  geography: Point location or NTA representative point
+  higher_is: context
+  map_classification: categorical_points
+  display_format: count
+  category_colors:
+    Emergency food provider: "#7a0177"
+
+prek_seats_2122:
+  domain: education
+  short_label: PreK seats
+  label: PreK seats, per school
+  description: >
+    Reported PreK seat count (prek_seats_2122) at each individual public
+    school, plotted at the school's own coordinates rather than summed to the
+    tract or scaled by tract population. Note that CB3's District 1 uses
+    citywide/choice-based elementary enrollment rather than neighborhood
+    zoning, so a school's seats are not necessarily meant to serve only the
+    tract it sits in.
+  unit: " seats"
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: "NYC DOE PreK seat counts (2021–22 SY), joined to LCGMS school locator"
+  year: 2022
+  geography: School point (native coordinates)
+  higher_is: better
+  map_classification: quintile
+  display_format: count
+  filename: prek_seats.html
+
+threek_seats_2122:
+  domain: education
+  short_label: 3-K seats
+  label: 3-K seats, per school
+  description: >
+    Reported 3-K seat count (threek_seats_2122) at each individual public
+    school, plotted at the school's own coordinates rather than summed to
+    the tract or scaled by tract population. Same zoning caveat as PreK
+    seats: District 1 enrollment is citywide/choice-based, not
+    neighborhood-zoned.
+  unit: " seats"
+  palette: ["#f7fbff", "#c6dbef", "#6baed6", "#2171b5", "#08306b"]
+  source: "NYC DOE 3-K seat counts (2021–22 SY), joined to LCGMS school locator"
+  year: 2022
+  geography: School point (native coordinates)
+  higher_is: better
+  map_classification: quintile
+  display_format: count
+  filename: threek_seats.html
+
+pct_iep_2122:
+  domain: education
+  short_label: Students with IEPs
+  label: Students with disabilities receiving special education services (IEP rate), per school
+  description: >
+    Rate of students classified as having a disability and receiving special
+    education services (IEP rate) at each individual public school, plotted
+    at the school's own coordinates. District 75 schools (serving students
+    with significant disabilities) are flagged separately on the map, since
+    their very high IEP rate reflects that specialized mission rather than
+    being comparable to a general-education school's rate. Notable given
+    CB3's building accessibility gap (only 21.4% of CB3 schools are fully
+    accessible per NYC IBO's Barriers to Learning, March 2025), which creates
+    a structural mismatch between where students with disabilities may need
+    to be served and where accessible buildings exist.
+  unit: "%"
+  palette: ["#f2f0f7", "#cbc9e2", "#9e9ac8", "#756bb1", "#54278f"]
+  source: "NYC DOE Demographic Snapshot (annual, NYC Open Data, '% Students with Disabilities' field); NYC IBO Barriers to Learning, March 2025; NYC DOE LCGMS (District 75 school flag)"
+  year: 2022
+  geography: School point (native coordinates)
+  map_classification: quintile
+  display_format: percent
+  filename: iep_rate.html
+
+enrollment_type:
+  domain: education
+  short_label: School type (enrollment & governance)
+  label: School enrollment type
+  description: >
+    Each CB3 school classified using the school-level file's own `type`
+    column: General admission, General admission - charter, Special
+    education, or Transfer school. Lets readers see whether resource
+    disparities (PTA funds, overcrowding, accessibility) align with school
+    type.
+  category_colors:
+    General admission: "#1b9e77"
+    General admission - charter: "#e7298a"
+    Special education: "#666666"
+    Transfer school: "#66a61e"
+  source: "NYC DOE LCGMS (type field)"
+  year: 2025
+  geography: School point (native coordinates)
+  map_classification: categorical
+  display_format: category
+  filename: enrollment_type.html
+# --- Language Access ---
+
+spanish_limited_english_household_share:
+  domain: language
+  short_label: Spanish LEP households
+  dimension: Spanish LEP households
+  label: Spanish limited-English-proficient households
+  description: Share of households that speak Spanish and have limited English proficiency.
+  unit: "%"
+  source: ACS 2020-2024 C16002
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: bubble
+  display_format: percent
+  filename: language_access_spanish_lep_households.html
+
+other_indo_european_limited_english_household_share:
+  domain: language
+  short_label: Other Indo-European LEP households
+  dimension: Other Indo-European LEP households
+  label: Other Indo-European limited-English-proficient households
+  description: Share of households that speak other Indo-European languages and have limited English proficiency.
+  unit: "%"
+  source: ACS 2020-2024 C16002
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: bubble
+  display_format: percent
+  filename: language_access_other_indo_european_lep_households.html
+
+asian_pacific_limited_english_household_share:
+  domain: language
+  short_label: Asian/Pacific Island LEP households
+  dimension: Asian/Pacific Island LEP households
+  label: Asian/Pacific Island limited-English-proficient households
+  description: Share of households that speak Asian/Pacific Island languages and have limited English proficiency.
+  unit: "%"
+  source: ACS 2020-2024 C16002
+  year: 2024
+  geography: Census tract
+  higher_is: context
+  map_classification: bubble
+  display_format: percent
+
+# --- Senior ---
 
 senior_service_sites:
   domain: senior

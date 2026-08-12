@@ -1,0 +1,350 @@
+---
+title: "CB3 Equity Report — Public Services Maps"
+format:
+  html:
+    toc: true
+    code-fold: true
+execute:
+  echo: true
+  warning: false
+  message: false
+jupyter: cb3
+---
+
+## Purpose
+
+This notebook reads the clean Public Services outputs from
+`scripts/public_service/build.py` and maps three dimensions:
+
+1. Park facility inventory: one categorical point map, one marker per park
+   per facility type it contains (`park_facility_inventory`).
+2. Public transportation access: one donut marker per tract, sized by total
+   transit stops and split into wedges by subway entrances vs. bus stops
+   (`subway_entrance_count`, `bus_stop_count`). Quarter-mile subway
+   accessibility (`subway_access_pct`) is computed and shown as a tooltip
+   field rather than its own choropleth.
+3. Public transportation access (points): the same subway entrances and bus
+   stops as individual points, not aggregated to a tract (`transit_stop_points`).
+4. Public restrooms: a standalone categorical point map by operational
+   status and accessibility (`public_restrooms`).
+
+Each map also includes the shared demographic layers (income, age, race and
+ethnicity, poverty, limited-English-proficient households) as a selectable
+choropleth backdrop, so any Public Services dimension can be compared against
+demographic context directly.
+
+Map HTML files are written to `maps/public_service/`.
+
+```{python}
+# Import packages for tract data, geometry, and interactive maps.
+from pathlib import Path
+import sys
+import yaml
+
+import folium
+import geopandas as gpd
+import pandas as pd
+
+# Ensure the reusable scripts package imports whether this QMD is rendered from
+# the project root or from scripts/.
+for candidate in [Path.cwd(), *Path.cwd().parents]:
+    if (candidate / "src" / "map_utils.py").exists():
+        sys.path.insert(0, str(candidate))
+        break
+
+from src.map_utils import (
+    add_categorical_point_layer,
+    add_demographic_backdrop_layers,
+    add_map_title,
+    add_zero_value_legend,
+    build_grouped_bubble_map,
+    find_project_dir,
+    make_base_map,
+)
+```
+
+```{python}
+# Define project inputs and output locations.
+PROJECT_DIR = find_project_dir()
+CLEAN_DIR = PROJECT_DIR / "data" / "clean"
+TRACT_PATH = CLEAN_DIR / "public_service_tract.csv"
+PARK_POINTS_PATH = CLEAN_DIR / "public_service_park_points.csv"
+PARK_FACILITY_POINTS_PATH = CLEAN_DIR / "public_service_park_facility_points.csv"
+TRANSIT_POINTS_PATH = CLEAN_DIR / "public_service_transit_points.csv"
+RESTROOM_POINTS_PATH = CLEAN_DIR / "public_service_restroom_points.csv"
+TRACT_GEOMETRY_PATH = PROJECT_DIR / "data" / "raw" / "Geography" / "2020_Census_Tracts_20260505.geojson"
+MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "public_service"
+MAP_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+with open(PROJECT_DIR / "docs" / "metric_metadata.yml") as f:
+    ALL_METRICS = yaml.safe_load(f)
+```
+
+## Prepare tract geometry and metrics
+
+```{python}
+# Read the clean tract metrics with GEOID preserved as an 11-character string.
+metrics = pd.read_csv(TRACT_PATH, dtype={"GEOID": "string"})
+
+# Read the 2020 tract polygons and keep only the 31 CB3 tracts.
+tract_geometry = gpd.read_file(TRACT_GEOMETRY_PATH)
+tract_geometry["GEOID"] = tract_geometry["geoid"].astype("string").str.zfill(11)
+tract_geometry = tract_geometry[["GEOID", "geometry"]]
+
+tracts = tract_geometry.merge(metrics, on="GEOID", how="inner", validate="one_to_one")
+tracts = gpd.GeoDataFrame(tracts, geometry="geometry", crs=tract_geometry.crs)
+
+assert len(tracts) == 31
+assert tracts["GEOID"].is_unique
+assert set(tracts["GEOID"]) == set(metrics["GEOID"])
+
+# Read tract-level demographics for the shared selectable backdrop layers.
+baseline_profile = pd.read_csv(CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv", dtype={"geoid": "string"})
+baseline_profile["GEOID"] = baseline_profile["geoid"].str.zfill(11)
+
+DEMOGRAPHIC_COLUMNS = [
+    "GEOID",
+    "median_household_income",
+    "age_0_to_19_share",
+    "age_20_to_64_share",
+    "age_65_plus_share",
+    "white_non_hispanic_share",
+    "black_non_hispanic_share",
+    "asian_non_hispanic_share",
+    "hispanic_share",
+    "poverty_rate",
+    "lep_household_share",
+]
+tracts = tracts.merge(baseline_profile[DEMOGRAPHIC_COLUMNS], on="GEOID", how="left", validate="one_to_one")
+
+# Park real footprint polygons, reconstructed from their WKT column.
+park_points_raw = pd.read_csv(PARK_POINTS_PATH, dtype={"GEOID": "string"})
+park_polygons = gpd.GeoDataFrame(
+    park_points_raw,
+    geometry=gpd.GeoSeries.from_wkt(park_points_raw["geometry_wkt"]),
+    crs="EPSG:4326",
+)
+
+# Park x facility-type points, transit points, and restroom points keep
+# their own native coordinates; attach tract/NTA labels for tooltips.
+park_facility_points = pd.read_csv(PARK_FACILITY_POINTS_PATH, dtype={"GEOID": "string"})
+transit_points = pd.read_csv(TRANSIT_POINTS_PATH, dtype={"GEOID": "string"})
+restroom_points = pd.read_csv(RESTROOM_POINTS_PATH, dtype={"GEOID": "string"})
+```
+
+```{python}
+# Build METRIC_SPECS and DEMOGRAPHIC_SPECS from metric_metadata.yml.
+def _to_map_spec(meta, include_filename=False):
+    spec = {
+        "dimension": meta["short_label"],
+        "label":     meta["label"],
+        "unit":      meta["unit"],
+        "palette":   meta.get("palette"),
+    }
+    if include_filename:
+        spec["filename"] = meta["filename"]
+    for key in ("positive_values_only", "zero_color", "zero_label", "category_colors", "fill_color", "outline_color"):
+        if key in meta:
+            spec[key] = meta[key]
+    return spec
+
+
+METRIC_SPECS = {
+    var: _to_map_spec(meta, include_filename=True)
+    for var, meta in ALL_METRICS.items()
+    if meta["domain"] == "public_service"
+}
+
+EXCLUDED_DEMOGRAPHIC_METRICS = {"senior_poverty_rate"}
+DEMOGRAPHIC_SPECS = {
+    var: _to_map_spec(meta)
+    for var, meta in ALL_METRICS.items()
+    if meta["domain"] == "demographics" and var not in EXCLUDED_DEMOGRAPHIC_METRICS
+}
+
+for metric in ["subway_access_pct", "subway_entrance_count", "bus_stop_count"]:
+    assert metric in tracts.columns, f"{metric} missing from tracts"
+for metric in DEMOGRAPHIC_SPECS:
+    assert metric in tracts.columns, f"{metric} missing from tracts"
+```
+
+## Park facility inventory
+
+```{python}
+# Real park footprint polygons as a plain outline/fill (white outline, black
+# fill, matching the bubble-layer style used elsewhere), with a facility-type
+# icon layer inside each footprint (icons spread around a small ring rather
+# than stacked at one point when a park has more than one facility type —
+# see offset_icon_points_ft in build.py). Small parks (many gardens/triangles
+# are under 0.1 acres) are too small for icons to sit legibly inside; icons
+# there will visibly spill past the park's edges.
+footprint_spec = METRIC_SPECS["park_footprint"]
+facility_spec = METRIC_SPECS["park_facility_inventory"]
+facility_output_path = MAP_OUTPUT_DIR / facility_spec["filename"]
+
+facility_map = make_base_map(tracts)
+add_demographic_backdrop_layers(facility_map, tracts, DEMOGRAPHIC_SPECS)
+
+park_polygon_layer_data = park_polygons[["park_name", "category", "facility_list", "geometry"]]
+folium.GeoJson(
+    data=park_polygon_layer_data.to_json(),
+    name=f"Park footprints (n={len(park_polygons)})",
+    overlay=True,
+    show=True,
+    style_function=lambda feature: {
+        "fillColor": footprint_spec["fill_color"],
+        "color": footprint_spec["outline_color"],
+        "weight": 1.5,
+        "fillOpacity": 0.65,
+    },
+    highlight_function=lambda _: {"weight": 3, "fillOpacity": 0.85},
+    tooltip=folium.GeoJsonTooltip(
+        fields=["park_name", "category", "facility_list"],
+        aliases=["Park", "Category", "Facilities"],
+        sticky=False,
+    ),
+).add_to(facility_map)
+
+add_categorical_point_layer(
+    facility_map,
+    park_facility_points,
+    category_col="facility_type",
+    category_colors=facility_spec["category_colors"],
+    name=f"Park facility icons (n={len(park_facility_points)})",
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["facility_type", "park_name", "tract_label"],
+    tooltip_aliases=["Facility", "Park", "Census tract"],
+    size=12,
+)
+add_map_title(
+    facility_map,
+    "CB3 Public Services: Park facility inventory",
+    "Choropleth: use the layer control to pick a demographic fill. Park shapes: "
+    "footprint outline/fill. Diamonds: one icon per facility type inside each park "
+    "(spread around a ring, not exact placement, on parks with more than one type). "
+    "Pickleball courts, chess/game tables, and skate parks are not in the source "
+    "inventory and are not shown.",
+)
+add_zero_value_legend(facility_map, "#d9d9d9", "Demographic data not available")
+folium.LayerControl(collapsed=False, position="topright").add_to(facility_map)
+facility_map.save(facility_output_path)
+facility_map
+```
+
+## Public transportation access
+
+```{python}
+# One donut marker per tract, sized by total transit stops (subway entrances
+# + bus stops) and split into wedges by their share, over the shared
+# selectable demographic choropleth backdrop. Subway entrances and bus stops
+# commonly both occur in the same tract, so separate same-coordinate bubble
+# layers would stack and hide each other; combine_as_pie=True draws one
+# marker instead.
+transit_output_path = MAP_OUTPUT_DIR / METRIC_SPECS["subway_entrance_count"]["filename"]
+
+tracts["subway_access_display"] = tracts["subway_access_pct"].round(1).astype(str) + "%"
+
+transit_map = build_grouped_bubble_map(
+    tracts, METRIC_SPECS, DEMOGRAPHIC_SPECS,
+    ["subway_entrance_count", "bus_stop_count"],
+    title="CB3 Public Services: Public transportation access",
+    subtitle="Choropleth: use the layer control to pick a demographic fill. Donut "
+    "markers: size shows total transit stops per tract; wedges show its mix of "
+    "subway entrances and bus stops.",
+    output_path=transit_output_path,
+    tooltip_fields=["tract_label", "nta_name", "subway_access_display"],
+    tooltip_aliases=["Census tract", "NTA", "Tract area within 1/4 mile of a subway entrance"],
+    combine_as_pie=True,
+    pie_name="Public transportation access",
+    pie_legend_title="Transit stop type",
+)
+transit_map
+```
+
+## Public transportation access (points)
+
+```{python}
+# Alternate, less-aggregated view of the same data: individual subway
+# entrance and bus stop points rather than tract-level pie bubbles.
+transit_points_spec = METRIC_SPECS["transit_stop_points"]
+transit_points_output_path = MAP_OUTPUT_DIR / transit_points_spec["filename"]
+
+transit_points_map = make_base_map(tracts)
+add_demographic_backdrop_layers(transit_points_map, tracts, DEMOGRAPHIC_SPECS)
+add_categorical_point_layer(
+    transit_points_map,
+    transit_points,
+    category_col="stop_type",
+    category_colors=transit_points_spec["category_colors"],
+    name=f"Transit stops (n={len(transit_points)})",
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["stop_name", "entrance_type", "tract_label"],
+    tooltip_aliases=["Stop", "Entrance type", "Census tract"],
+    size=10,
+)
+add_map_title(
+    transit_points_map,
+    "CB3 Public Services: Public transportation access (points)",
+    "Choropleth: use the layer control to pick a demographic fill. Markers: individual "
+    "subway station entrances and bus stops, not aggregated to a tract.",
+)
+add_zero_value_legend(transit_points_map, "#d9d9d9", "Demographic data not available")
+folium.LayerControl(collapsed=False, position="topright").add_to(transit_points_map)
+transit_points_map.save(transit_points_output_path)
+transit_points_map
+```
+
+## Public restrooms
+
+```{python}
+# Standalone categorical point map by operational status and accessibility.
+restroom_spec = METRIC_SPECS["public_restrooms"]
+restroom_output_path = MAP_OUTPUT_DIR / restroom_spec["filename"]
+
+restroom_map = make_base_map(tracts)
+add_demographic_backdrop_layers(restroom_map, tracts, DEMOGRAPHIC_SPECS)
+add_categorical_point_layer(
+    restroom_map,
+    restroom_points,
+    category_col="status_category",
+    category_colors=restroom_spec["category_colors"],
+    name=f"Public restrooms (n={len(restroom_points)})",
+    lat_col="latitude",
+    lon_col="longitude",
+    tooltip_fields=["facility_name", "location_type", "tract_label"],
+    tooltip_aliases=["Facility", "Location type", "Census tract"],
+    size=15,
+)
+add_map_title(
+    restroom_map,
+    "CB3 Public Services: Public restrooms",
+    "Choropleth: use the layer control to pick a demographic fill. Markers: colored "
+    "by operational status and, if operational, ADA accessibility. Not in "
+    "CB3_Data_Reference_by_Domain_v4.csv's Public Services rows; shown here as a "
+    "standalone map from the available clean data.",
+)
+add_zero_value_legend(restroom_map, "#d9d9d9", "Demographic data not available")
+folium.LayerControl(collapsed=False, position="topright").add_to(restroom_map)
+restroom_map.save(restroom_output_path)
+restroom_map
+```
+
+## Output validation
+
+```{python}
+# Verify that all HTML deliverables were written.
+expected_map_files = [
+    facility_output_path,
+    transit_output_path,
+    transit_points_output_path,
+    restroom_output_path,
+]
+
+for map_file in expected_map_files:
+    assert map_file.exists()
+    assert map_file.stat().st_size > 10_000
+
+print(f"Wrote {len(expected_map_files)} map files to {MAP_OUTPUT_DIR}")
+```

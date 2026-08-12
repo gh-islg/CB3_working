@@ -17,6 +17,7 @@ __pycache__/
 # Local generated outputs
 maps/
 data/clean/
+*.html
 
 # OS/editor noise
 .DS_Store
