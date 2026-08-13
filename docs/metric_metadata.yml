@@ -696,7 +696,6 @@ public_restrooms:
 median_household_income:
   domain: demographics 
   short_label: Median household income
-  dimension: Median household income
   label: Median household income
   description: Median household income by census tract.
   unit: "$"
@@ -717,7 +716,7 @@ median_household_income:
 age_0_to_19_share:
   domain: demographics
   short_label: Age 0-19
-  dimension: Age 0-19
+  dimension: Age
   label: Age 0-19
   description: Share of residents ages 0 to 19 by census tract.
   unit: "%"
@@ -738,7 +737,7 @@ age_0_to_19_share:
 age_20_to_64_share:
   domain: demographics
   short_label: Age 20-64
-  dimension: Age 20-64
+  dimension: Age
   label: Age 20-64
   description: Share of residents ages 20 to 64 by census tract.
   unit: "%"
@@ -759,7 +758,7 @@ age_20_to_64_share:
 age_65_plus_share:
   domain: demographics
   short_label: Age 65+
-  dimension: Age 65+
+  dimension: Age
   label: Age 65+
   description: Share of residents ages 65 and older by census tract.
   unit: "%"
@@ -780,7 +779,7 @@ age_65_plus_share:
 white_non_hispanic_share:
   domain: demographics
   short_label: White non-Hispanic share
-  dimension: White non-Hispanic share
+  dimension: Race & ethnicity
   label: White non-Hispanic share
   description: Share of residents identifying as White non-Hispanic by census tract.
   unit: "%"
@@ -801,7 +800,7 @@ white_non_hispanic_share:
 black_non_hispanic_share:
   domain: demographics
   short_label: Black non-Hispanic share
-  dimension: Black non-Hispanic share
+  dimension: Race & ethnicity
   label: Black non-Hispanic share
   description: Share of residents identifying as Black non-Hispanic by census tract.
   unit: "%"
@@ -822,7 +821,7 @@ black_non_hispanic_share:
 asian_non_hispanic_share:
   domain: demographics
   short_label: Asian non-Hispanic share
-  dimension: Asian non-Hispanic share
+  dimension: Race & ethnicity
   label: Asian non-Hispanic share
   description: Share of residents identifying as Asian non-Hispanic by census tract.
   unit: "%"
@@ -843,7 +842,7 @@ asian_non_hispanic_share:
 hispanic_share:
   domain: demographics
   short_label: Hispanic share
-  dimension: Hispanic share
+  dimension: Race & ethnicity
   label: Hispanic share
   description: Share of residents identifying as Hispanic by census tract.
   unit: "%"
@@ -864,7 +863,6 @@ hispanic_share:
 poverty_rate:
   domain: demographics
   short_label: Poverty rate
-  dimension: Poverty rate
   label: Poverty rate
   description: Share of residents below poverty by census tract.
   unit: "%"
@@ -899,7 +897,6 @@ senior_poverty_rate:
 lep_household_share:
   domain: demographics
   short_label: Limited-English-proficient households
-  dimension: Limited-English-proficient households
   label: Limited-English-proficient households
   description: Share of households with limited English proficiency by census tract.
   unit: "%"
