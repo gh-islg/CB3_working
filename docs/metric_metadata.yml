@@ -1228,6 +1228,17 @@ threek_seats_2122:
   display_format: count
   filename: threek_seats.html
 
+early_childhood_seats_2122:
+  # Container/parent entry for the per-school early-childhood-seats donut. This
+  # metric has no CSV column of its own — build_bubbles' pie handling sizes the
+  # donut by the SUM of its two wedge columns (prek_seats_2122 + threek_seats_2122),
+  # never reading an "early_childhood_seats_2122" value. It exists purely so
+  # pie_overrides has a parent whose short_label supplies the donut's dropdown
+  # label ("every metric needs an entry").
+  domain: education
+  short_label: Early-childhood seats (3-K + PreK)
+  unit: " seats"
+
 pct_iep_2122:
   domain: education
   short_label: Students with IEPs
