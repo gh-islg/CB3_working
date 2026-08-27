@@ -527,13 +527,13 @@ hurricane_evacuation_zone:
     "X" indicates not in an evacuation zone), clipped to the CB3 tract
     boundary.
   category_colors:
-    "1": "#a50026"
-    "2": "#d73027"
-    "3": "#f46d43"
-    "4": "#fdae61"
-    "5": "#fee08b"
-    "6": "#d9ef8b"
-    "7": "#a6d96a"
+    "1": "#990000"
+    "2": "#d7301f"
+    "3": "#ef6548"
+    "4": "#fc8d59"
+    "5": "#fdbb84"
+    "6": "#fdd49e"
+    "7": "#fef0d9"
     "X": "#d9d9d9"
   source: NYC OEM Hurricane Evacuation Zones
   year: 2026
