@@ -409,19 +409,71 @@ tree_health:
   label: Living street tree health status
   description: >
     Health rating (Good/Fair/Poor) of individual living street trees from the
-    2015 TreesCount census, plotted at each tree's own coordinates rather
-    than a tract statistic (no numeric magnitude to size a bubble by).
+    2015 TreesCount census. Mapped as tract-level counts (tree_count_good,
+    tree_count_fair, tree_count_poor); this entry's category_colors are
+    reused for the tract map's pie-wedge colors.
   category_colors:
     Good: "#238b45"
     Fair: "#fec44f"
     Poor: "#d94701"
   source: 2015 Street Tree Census (NYC Parks)
   year: 2015
-  geography: Individual street tree
+  geography: Individual street tree, aggregated to tract counts
   higher_is: n/a
   map_classification: categorical
   display_format: category
   filename: street_tree_health.html
+
+tree_count_good:
+  domain: environment
+  short_label: Good
+  label: Living street trees rated Good
+  description: >
+    Count of living street trees (2015 TreesCount census) rated Good,
+    aggregated to the census tract. One of three counts (with
+    tree_count_fair, tree_count_poor) drawn as pie-wedge shares of the
+    street tree health tract map.
+  unit: " trees"
+  source: 2015 Street Tree Census (NYC Parks)
+  year: 2015
+  geography: Census tract (aggregated from individual street trees)
+  higher_is: better
+  map_classification: count
+  display_format: count
+
+tree_count_fair:
+  domain: environment
+  short_label: Fair
+  label: Living street trees rated Fair
+  description: >
+    Count of living street trees (2015 TreesCount census) rated Fair,
+    aggregated to the census tract. One of three counts (with
+    tree_count_good, tree_count_poor) drawn as pie-wedge shares of the
+    street tree health tract map.
+  unit: " trees"
+  source: 2015 Street Tree Census (NYC Parks)
+  year: 2015
+  geography: Census tract (aggregated from individual street trees)
+  higher_is: n/a
+  map_classification: count
+  display_format: count
+
+tree_count_poor:
+  domain: environment
+  short_label: Poor
+  label: Living street trees rated Poor
+  description: >
+    Count of living street trees (2015 TreesCount census) rated Poor,
+    aggregated to the census tract. One of three counts (with
+    tree_count_good, tree_count_fair) drawn as pie-wedge shares of the
+    street tree health tract map.
+  unit: " trees"
+  source: 2015 Street Tree Census (NYC Parks)
+  year: 2015
+  geography: Census tract (aggregated from individual street trees)
+  higher_is: worse
+  map_classification: count
+  display_format: count
 
 nycha_residential_building:
   domain: environment
@@ -474,14 +526,18 @@ hurricane_evacuation_zone:
     NYC OEM hurricane evacuation zone designation (Zone 1 evacuates first;
     "X" indicates not in an evacuation zone), clipped to the CB3 tract
     boundary.
+  # Sequential red→orange ramp (ColorBrewer OrRd, reversed) instead of the
+  # original rainbow scale: Zone 1 (evacuates first, worst) is darkest,
+  # fading to Zone 7 (least severe); X (not in a zone) stays neutral gray,
+  # matching the "not applicable" gray convention used elsewhere in the app.
   category_colors:
-    "1": "#a50026"
-    "2": "#d73027"
-    "3": "#f46d43"
-    "4": "#fdae61"
-    "5": "#fee08b"
-    "6": "#d9ef8b"
-    "7": "#a6d96a"
+    "1": "#990000"
+    "2": "#d7301f"
+    "3": "#ef6548"
+    "4": "#fc8d59"
+    "5": "#fdbb84"
+    "6": "#fdd49e"
+    "7": "#fef0d9"
     "X": "#d9d9d9"
   source: NYC OEM Hurricane Evacuation Zones
   year: 2026
@@ -644,7 +700,6 @@ public_restrooms:
 median_household_income:
   domain: demographics 
   short_label: Median household income
-  dimension: Median household income
   label: Median household income
   description: Median household income by census tract.
   unit: "$"
@@ -665,7 +720,7 @@ median_household_income:
 age_0_to_19_share:
   domain: demographics
   short_label: Age 0-19
-  dimension: Age 0-19
+  dimension: Age
   label: Age 0-19
   description: Share of residents ages 0 to 19 by census tract.
   unit: "%"
@@ -686,7 +741,7 @@ age_0_to_19_share:
 age_20_to_64_share:
   domain: demographics
   short_label: Age 20-64
-  dimension: Age 20-64
+  dimension: Age
   label: Age 20-64
   description: Share of residents ages 20 to 64 by census tract.
   unit: "%"
@@ -707,7 +762,7 @@ age_20_to_64_share:
 age_65_plus_share:
   domain: demographics
   short_label: Age 65+
-  dimension: Age 65+
+  dimension: Age
   label: Age 65+
   description: Share of residents ages 65 and older by census tract.
   unit: "%"
@@ -728,7 +783,7 @@ age_65_plus_share:
 white_non_hispanic_share:
   domain: demographics
   short_label: White non-Hispanic share
-  dimension: White non-Hispanic share
+  dimension: Race & ethnicity
   label: White non-Hispanic share
   description: Share of residents identifying as White non-Hispanic by census tract.
   unit: "%"
@@ -749,7 +804,7 @@ white_non_hispanic_share:
 black_non_hispanic_share:
   domain: demographics
   short_label: Black non-Hispanic share
-  dimension: Black non-Hispanic share
+  dimension: Race & ethnicity
   label: Black non-Hispanic share
   description: Share of residents identifying as Black non-Hispanic by census tract.
   unit: "%"
@@ -770,7 +825,7 @@ black_non_hispanic_share:
 asian_non_hispanic_share:
   domain: demographics
   short_label: Asian non-Hispanic share
-  dimension: Asian non-Hispanic share
+  dimension: Race & ethnicity
   label: Asian non-Hispanic share
   description: Share of residents identifying as Asian non-Hispanic by census tract.
   unit: "%"
@@ -791,7 +846,7 @@ asian_non_hispanic_share:
 hispanic_share:
   domain: demographics
   short_label: Hispanic share
-  dimension: Hispanic share
+  dimension: Race & ethnicity
   label: Hispanic share
   description: Share of residents identifying as Hispanic by census tract.
   unit: "%"
@@ -812,7 +867,6 @@ hispanic_share:
 poverty_rate:
   domain: demographics
   short_label: Poverty rate
-  dimension: Poverty rate
   label: Poverty rate
   description: Share of residents below poverty by census tract.
   unit: "%"
@@ -847,7 +901,6 @@ senior_poverty_rate:
 lep_household_share:
   domain: demographics
   short_label: Limited-English-proficient households
-  dimension: Limited-English-proficient households
   label: Limited-English-proficient households
   description: Share of households with limited English proficiency by census tract.
   unit: "%"
@@ -1018,21 +1071,6 @@ food_insecurity_rate_pct:
   display_format: percent
   filename: food_insecurity_by_tract.html
 
-utility_shutoff_risk_pct:
-  domain: economic-security-food
-  short_label: Utility shutoff risk
-  label: Utility shutoff risk
-  description: >
-    Estimated prevalence of utility shutoff risk from CDC PLACES.
-  unit: "%"
-  source: CDC PLACES
-  year: 2025 release
-  geography: Census tract
-  higher_is: worse
-  map_classification: bubble
-  display_format: percent
-  filename: utility_shutoff_risk_by_tract.html
-
 food_supply_gap_rank_nta:
   domain: economic-security-food-context
   short_label: Food supply gap rank
@@ -1061,7 +1099,38 @@ food_supply_gap_score_nta:
   higher_is: worse
   map_classification: tooltip
   display_format: number
-  filename: food_supply_gap_score.html
+  filename: context_only.html
+
+food_supply_gap_food_insecure_pct_nta:
+  domain: economic-security-food-context
+  short_label: NTA food insecure share
+  label: Food insecure percentage by NTA
+  description: >
+    NTA-level food insecure percentage from emergency food supply gap data joined
+    to CB3 tracts by NTA.
+  unit: "%"
+  source: NYC emergency food supply gap data
+  year: 2026
+  geography: NTA joined to census tract
+  higher_is: worse
+  map_classification: tooltip
+  display_format: percent
+  filename: context_only.html
+
+utility_shutoff_risk_pct:
+  domain: economic-security-food
+  short_label: Utility shutoff risk
+  label: Utility shutoff risk
+  description: >
+    Estimated prevalence of utility shutoff risk from CDC PLACES.
+  unit: "%"
+  source: CDC PLACES
+  year: 2025 release
+  geography: Census tract
+  higher_is: worse
+  map_classification: bubble
+  display_format: percent
+  filename: utility_shutoff_risk_by_tract.html
 
 # --- Education ---
 
@@ -1162,6 +1231,17 @@ threek_seats_2122:
   map_classification: quintile
   display_format: count
   filename: threek_seats.html
+
+early_childhood_seats_2122:
+  # Container/parent entry for the per-school early-childhood-seats donut. This
+  # metric has no CSV column of its own — build_bubbles' pie handling sizes the
+  # donut by the SUM of its two wedge columns (prek_seats_2122 + threek_seats_2122),
+  # never reading an "early_childhood_seats_2122" value. It exists purely so
+  # pie_overrides has a parent whose short_label supplies the donut's dropdown
+  # label ("every metric needs an entry").
+  domain: education
+  short_label: Early-childhood seats (3-K + PreK)
+  unit: " seats"
 
 pct_iep_2122:
   domain: education
@@ -1395,6 +1475,18 @@ white_nh_senior_poverty_rate_60plus:
     - "#74c476"
     - "#238b45"
     - "#00441b"
+
+senior_lep_65plus:
+  # Container/parent entry for the 4-language LEP donut below. This metric has
+  # no CSV column of its own — build_bubbles' pie handling sizes the donut by
+  # the SUM of the 4 wedge columns (spanish/other_indo_european/asian_pacific/
+  # other_languages), never reading a "senior_lep_65plus" value. It exists
+  # purely so pie_overrides has a parent whose short_label/dimension supply
+  # the donut's dropdown label and optgroup ("every metric needs an entry").
+  domain: senior
+  short_label: Senior limited English proficiency
+  dimension: Senior limited English proficiency
+  unit: "%"
 
 spanish_senior_lep_rate_65plus:
   domain: senior
