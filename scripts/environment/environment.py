@@ -1,7 +1,6 @@
 """Build the CB3 Environmental Conditions tract-level metrics table.
 It uses only local project data and writes:
     data/clean/environment_tract.csv
-    data/clean/environment_rodent_inspection_points.csv
     data/clean/environment_tree_points.csv
     data/clean/environment_nycha_building_points.csv
     data/clean/cb3_hurricane_evacuation_zones.geojson
@@ -43,7 +42,6 @@ HOUSING_RAW_DIR = PROJECT_DIR / "data" / "raw" / "Housing and Affordability"
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
 OUTPUT_PATH = CLEAN_DIR / "environment_tract.csv"
 LOG_PATH = CLEAN_DIR / "environment_log.txt"
-RODENT_INSPECTION_POINTS_PATH = CLEAN_DIR / "environment_rodent_inspection_points.csv"
 TREE_POINTS_PATH = CLEAN_DIR / "environment_tree_points.csv"
 NYCHA_BUILDING_POINTS_PATH = CLEAN_DIR / "environment_nycha_building_points.csv"
 PM25_RASTER_PATH = RAW_DIR / "AnnAvg_1_16_300m" / "aa16_pm300m"
@@ -69,35 +67,6 @@ def _assign(frame, lon_col, lat_col, source_tract_col=None):
     )
 
 
-def build_building_points(frame, bbl_col, address_col, lon_col, lat_col, value_cols):
-    """Aggregate point-event records (e.g. inspections) to one row per
-    building (BBL) with summed metric counts and native coordinates.
-
-    Records missing a BBL are dropped from the building-level export (they
-    still contribute to the tract-level counts computed separately), since
-    there is no reliable building key to group them on.
-    """
-    with_bbl = frame[
-        frame[bbl_col].notna()
-        & frame[lat_col].notna()
-        & frame[lon_col].notna()
-        & frame["GEOID"].isin(CB3_GEOIDS)
-    ].copy()
-    with_bbl[bbl_col] = with_bbl[bbl_col].astype("int64")
-    points = (
-        with_bbl.groupby(bbl_col, as_index=False)
-        .agg(
-            **{
-                "GEOID": ("GEOID", "first"),
-                "address": (address_col, "first"),
-                "longitude": (lon_col, "first"),
-                "latitude": (lat_col, "first"),
-                **{col: (col, "sum") for col in value_cols},
-            }
-        )
-        .rename(columns={bbl_col: "bbl"})
-    )
-    return points
 #%%
 
 
@@ -172,16 +141,6 @@ rodent_insp_metrics = (
     rodent_insp_mapped.groupby("GEOID", as_index=False)["rodent_active_inspections"]
     .sum()
 )
-
-# Building-level export for point/bubble maps: one row per building with a
-# confirmed-activity inspection, keeping its own coordinates rather than
-# collapsing to the tract centroid.
-rodent_insp_points = build_building_points(
-    rodent_insp_mapped, "BBL", "LOCATION", "LONGITUDE", "LATITUDE",
-    ["rodent_active_inspections"],
-)
-rodent_insp_points.to_csv(RODENT_INSPECTION_POINTS_PATH, index=False)
-print(f"Wrote {len(rodent_insp_points)} rodent inspection building points to {RODENT_INSPECTION_POINTS_PATH}")
 #%%
 
 # Street trees (NYC Parks 2015 TreesCount census)
