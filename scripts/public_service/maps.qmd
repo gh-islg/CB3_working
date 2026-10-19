@@ -16,8 +16,9 @@ jupyter: cb3
 This notebook reads the clean Public Services outputs from
 `scripts/public_service/build.py` and maps three dimensions:
 
-1. Park facility inventory: one categorical point map, one marker per park
-   per facility type it contains (`park_facility_inventory`).
+1. Park facility inventory: one categorical point map, one marker per
+   individual facility (court, field, pool, playground, dog run) at its own
+   coordinates inside its park (`park_facility_inventory`).
 2. Public transportation access: one donut marker per tract, sized by total
    transit stops and split into wedges by subway entrances vs. bus stops
    (`subway_entrance_count`, `bus_stop_count`). Quarter-mile subway
@@ -68,7 +69,7 @@ from src.map_utils import (
 PROJECT_DIR = find_project_dir()
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
 TRACT_PATH = CLEAN_DIR / "public_service_tract.csv"
-PARK_POINTS_PATH = CLEAN_DIR / "public_service_park_points.csv"
+PARK_FOOTPRINTS_PATH = CLEAN_DIR / "public_service_park_footprints.csv"
 PARK_FACILITY_POINTS_PATH = CLEAN_DIR / "public_service_park_facility_points.csv"
 TRANSIT_POINTS_PATH = CLEAN_DIR / "public_service_transit_points.csv"
 RESTROOM_POINTS_PATH = CLEAN_DIR / "public_service_restroom_points.csv"
@@ -118,14 +119,14 @@ DEMOGRAPHIC_COLUMNS = [
 tracts = tracts.merge(baseline_profile[DEMOGRAPHIC_COLUMNS], on="GEOID", how="left", validate="one_to_one")
 
 # Park real footprint polygons, reconstructed from their WKT column.
-park_points_raw = pd.read_csv(PARK_POINTS_PATH, dtype={"GEOID": "string"})
+park_footprints_raw = pd.read_csv(PARK_FOOTPRINTS_PATH)
 park_polygons = gpd.GeoDataFrame(
-    park_points_raw,
-    geometry=gpd.GeoSeries.from_wkt(park_points_raw["geometry_wkt"]),
+    park_footprints_raw,
+    geometry=gpd.GeoSeries.from_wkt(park_footprints_raw["geometry_wkt"]),
     crs="EPSG:4326",
 )
 
-# Park x facility-type points, transit points, and restroom points keep
+# Individual park facility points, transit points, and restroom points keep
 # their own native coordinates; attach tract/NTA labels for tooltips.
 park_facility_points = pd.read_csv(PARK_FACILITY_POINTS_PATH, dtype={"GEOID": "string"})
 transit_points = pd.read_csv(TRANSIT_POINTS_PATH, dtype={"GEOID": "string"})
@@ -172,12 +173,9 @@ for metric in DEMOGRAPHIC_SPECS:
 
 ```{python}
 # Real park footprint polygons as a plain outline/fill (white outline, black
-# fill, matching the bubble-layer style used elsewhere), with a facility-type
-# icon layer inside each footprint (icons spread around a small ring rather
-# than stacked at one point when a park has more than one facility type —
-# see offset_icon_points_ft in build.py). Small parks (many gardens/triangles
-# are under 0.1 acres) are too small for icons to sit legibly inside; icons
-# there will visibly spill past the park's edges.
+# fill, matching the bubble-layer style used elsewhere), with one icon per
+# individual facility at its own coordinates inside the footprint. Facilities
+# that sit close together in small parks can overlap at city-wide zoom.
 footprint_spec = METRIC_SPECS["park_footprint"]
 facility_spec = METRIC_SPECS["park_facility_inventory"]
 facility_output_path = MAP_OUTPUT_DIR / facility_spec["filename"]
@@ -221,8 +219,8 @@ add_map_title(
     facility_map,
     "CB3 Public Services: Park facility inventory",
     "Choropleth: use the layer control to pick a demographic fill. Park shapes: "
-    "footprint outline/fill. Diamonds: one icon per facility type inside each park "
-    "(spread around a ring, not exact placement, on parks with more than one type). "
+    "footprint outline/fill. Diamonds: one icon per individual facility at its own "
+    "location inside the park. "
     "Pickleball courts, chess/game tables, and skate parks are not in the source "
     "inventory and are not shown.",
 )

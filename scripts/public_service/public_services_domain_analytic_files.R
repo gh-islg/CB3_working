@@ -49,6 +49,24 @@ write.csv(cb3_subway_stops_red, "PUBLIC_SERVICE_DOMAIN_subway_entrances_file.csv
 
 
 #### parks
+# Polygon -> single point helper. Facility polygons (courts, fields, pools,
+# playgrounds, dog runs) are reduced to one point that is guaranteed to lie
+# inside the polygon (point-on-surface, not centroid, so concave shapes stay
+# inside). The point is computed in NY State Plane feet (EPSG:2263), then
+# returned as lon/lat (EPSG:4326).
+polygon_to_lonlat <- function(df, wkt_col = "the_geom") {
+  pts <- df %>%
+    st_as_sf(wkt = wkt_col, crs = 4326) %>%
+    st_make_valid() %>%
+    st_transform(2263) %>%
+    st_point_on_surface() %>%
+    st_transform(4326)
+  coords <- st_coordinates(pts)
+  pts %>%
+    st_drop_geometry() %>%
+    mutate(longitude = coords[, 1], latitude = coords[, 2])
+}
+
 # --- 1. CB3 park base list ---
 cb3_parks <- read_csv("Parks_Properties_20260716.csv") %>%
   filter(BOROUGH == "M", str_detect(COMMUNITYBOARD, "103")) %>%
@@ -62,6 +80,7 @@ cb3_parks <- read_csv("Parks_Properties_20260716.csv") %>%
   )
 
 # --- 2. Courts, fields, pools, rinks (Planimetric Database) ---
+# One row per individual facility feature, with its own lon/lat.
 park_facilities <- read_csv("NYC_Planimetric_Database__Open_Space_(Parks)_20260716.csv") %>%
   mutate(
     FEAT_CODE = str_remove_all(FEAT_CODE, ","),
@@ -81,20 +100,20 @@ park_facilities <- read_csv("NYC_Planimetric_Database__Open_Space_(Parks)_202607
     TRUE ~ NA_character_
   )) %>%
   filter(!is.na(facility_type)) %>%
-  count(GISPROPNUM = PARKNUM, facility_type) %>%
-  mutate(n=1) |> 
-  pivot_wider(names_from = facility_type, values_from = n, values_fill = 0)
+  polygon_to_lonlat() %>%
+  select(GISPROPNUM = PARKNUM, facility_type, longitude, latitude)
 
-# --- 3. Playgrounds (presence flag) ---
+# --- 3. Playgrounds (one row per play area) ---
 playgrounds <- read_csv("DPR_PlayAreas_001_20260716.csv") %>%
   filter(GISPROPNUM %in% cb3_parks$GISPROPNUM) %>%
-  distinct(GISPROPNUM) %>%
-  mutate(has_playground = TRUE)
+  polygon_to_lonlat() %>%
+  transmute(GISPROPNUM, facility_type = "playground", longitude, latitude)
 
-# --- 4. Dog runs ---
+# --- 4. Dog runs (one row per active dog run) ---
 dog_runs <- read_csv("Dog_Runs_20260716.csv") %>%
   filter(GISPROPNUM %in% cb3_parks$GISPROPNUM, DOG_AREA_TYPE == "Dog Run", FEATURESTATUS == "Active") %>%
-  count(GISPROPNUM, name = "dog_runs")
+  polygon_to_lonlat() %>%
+  transmute(GISPROPNUM, facility_type = "dog_run", longitude, latitude)
 
 # --- 5. Cleanliness (12-month acceptable rate) ---
 cleanliness <- read_csv("Parks_Inspection_Program_–_Inspections_20260716.csv") %>%
@@ -108,14 +127,24 @@ cleanliness <- read_csv("Parks_Inspection_Program_–_Inspections_20260716.csv")
   ) |> 
   select(GISPROPNUM, inspection_date=Date, condition_acceptable)
 
-# --- 6. Combine into final analytical file ---
-cb3_park_facility_inventory <- cb3_parks %>%
-  left_join(park_facilities, by = "GISPROPNUM") %>%
-  left_join(playgrounds, by = "GISPROPNUM") %>%
-  left_join(dog_runs, by = "GISPROPNUM") %>%
-  left_join(cleanliness, by = "GISPROPNUM") 
+# --- 6. Write the two analytical files ---
+# Facility-level file: one row per facility with its own coordinates.
+cb3_park_facilities <- bind_rows(park_facilities, playgrounds, dog_runs) %>%
+  left_join(
+    cb3_parks %>% st_drop_geometry() %>% select(GISPROPNUM, park_name),
+    by = "GISPROPNUM"
+  ) %>%
+  select(GISPROPNUM, park_name, facility_type, longitude, latitude)
 
-write.csv(cb3_park_facility_inventory, "PUBLIC_SERVICE_DOMAIN_park_facilities.csv", row.names = F)
+write.csv(cb3_park_facilities, "PUBLIC_SERVICE_DOMAIN_park_facilities.csv", row.names = F)
+
+# Park-level file: one row per park with its footprint as a WKT column.
+cb3_park_footprints <- cb3_parks %>%
+  mutate(geometry_wkt = st_as_text(st_geometry(.))) %>%
+  st_drop_geometry() %>%
+  left_join(cleanliness, by = "GISPROPNUM")
+
+write.csv(cb3_park_footprints, "PUBLIC_SERVICE_DOMAIN_parks.csv", row.names = F)
 
 
 
