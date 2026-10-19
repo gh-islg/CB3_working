@@ -517,13 +517,11 @@ park_facility_inventory:
   short_label: Park facility inventory
   label: Park facility type
   description: >
-    Individual facility-type icons inside each park's real footprint
-    (basketball court, other court, baseball/softball field, pool, football
-    field, running track, soccer field, tennis court, playground, dog run).
-    A park with more than one facility type has its icons spread around a
-    small ring rather than stacked at one point. Pickleball courts,
-    chess/game tables, and skate parks are not columns in the source
-    facility inventory and are not represented here.
+    One icon per individual facility at its own coordinates inside the
+    park's real footprint (basketball court, other court, baseball/softball
+    field, pool, football field, running track, soccer field, tennis court,
+    playground, dog run). Pickleball courts, chess/game tables, and skate
+    parks are not in the source facility data and are not represented here.
   unit: ""
   category_colors:
     Basketball court: "#e6194b"
@@ -538,7 +536,7 @@ park_facility_inventory:
     Dog run: "#808000"
   source: NYC Parks Facilities dataset (OpenData)
   year: 2026
-  geography: Individual facility icon inside its park polygon
+  geography: Individual facility point (polygon point-on-surface) inside its park polygon
   higher_is: context
   map_classification: categorical
   display_format: category
