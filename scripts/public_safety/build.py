@@ -1,23 +1,17 @@
-"""Build CB3 public-safety data from local raw files.
-
-Housing input may be either:
-  1. a prepared CSV with GEOID,total_housing_units; optional housing_units_vintage, or
-  2. a raw ACS B25001 CSV containing B25001_001E plus GEOID or state/county/tract.
-Census fetch requires CENSUS_API_KEY in the environment; 
-
-Burglary rate = pooled 2021–2025 completed residential burglary complaints /
-tract-level total housing units * 1000, not annualized. Preferred denominator:
-ACS 2020–2024 five-year B25001_001E (2024 ACS 5-year release).
+"""
+Residential burglary is the pooled 2021–2025 count of completed felony
+complaints at residential premises, spatially matched to CB3 census tracts.
 
 Calls source (Historic): https://data.cityofnewyork.us/resource/d6zx-ckhd.json
 Response minutes = (ARRIVD_TS - ADD_TS).total_seconds() / 60. ADD_TS is the
 ICAD entry timestamp; this is not an independently observed telephone-ring
-start. The output is entry-based and includes officer-initiated entries and
-zero intervals, not an official 911 response statistic. Missing/negative
-intervals are excluded from clean response records and medians.
+start. 
+
+Entries with missing arrival timestamps or arrival equal to entry time
+are excluded, as are negative intervals. These filters reduce self-initiated
+entries but do not establish that every retained record is a public 911 call.
 The API bounding-box filter excludes missing locations before downloading.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -35,15 +29,9 @@ import pandas as pd
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = PROJECT_ROOT / "data/raw/Public Safety"
-HOUSING_RAW_DIR = PROJECT_ROOT / "data/raw/Housing and Affordability"
 
 DEFAULT_CALLS_CANDIDATES = [
     RAW_DIR / "nypd_calls_2021_2025.csv"
-]
-
-DEFAULT_HOUSING_CANDIDATES = [
-    RAW_DIR / "acs_2024_housing_units.csv",
-    HOUSING_RAW_DIR / "acs_5yr_2024_B25001.csv",
 ]
 
 START_DATE = "2021-01-01"
@@ -175,7 +163,6 @@ def clean_mvc(input_path: Path) -> pd.DataFrame:
     mvc["LATITUDE"] = pd.to_numeric(mvc["LATITUDE"], errors="coerce")
     mvc["LONGITUDE"] = pd.to_numeric(mvc["LONGITUDE"], errors="coerce")
 
-    # Kailey's preferred traffic-safety metric:
     # collision where at least one pedestrian or cyclist was injured.
     mvc["PED_CYCLIST_INJURY_CRASH"] = (
         (mvc["NUMBER OF PEDESTRIANS INJURED"] > 0)
@@ -303,10 +290,7 @@ def clean_nypd(input_path: Path) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 # %% Optional API inputs
-# Normal builds reuse existing local calls/housing files when available.
-# API downloads happen only when the corresponding --fetch-* flag is explicit.
-# Housing can be supplied as a local GEOID,total_housing_units CSV, a raw ACS
-# B25001 CSV, or fetched with --fetch-housing-units.
+# Normal builds reuse saved local calls files.
 def api_json(url: str, params: dict, token: str | None = None):
     """Read JSON with bounded retries; never include credential-bearing URLs in errors."""
     headers = {"Accept": "application/json"}
@@ -327,182 +311,6 @@ def api_json(url: str, params: dict, token: str | None = None):
             raise RuntimeError("API returned non-JSON data; check access/key requirements.") from None
         time.sleep(2 ** attempt)
 
-
-def fetch_housing_units(output_path: Path) -> None:
-    """Cache ACS 2020–2024 five-year B25001 total housing units for Manhattan tracts.
-
-    B25001_001E is the estimate of total housing units for each census tract.
-    The API request returns all Manhattan tracts; add_burglary_rate() later keeps
-    only the GEOIDs present in the 31-tract CB3 summary.
-    """
-    key = os.environ.get("CENSUS_API_KEY")
-    if not key:
-        raise ValueError(
-            "Set CENSUS_API_KEY locally, or supply --housing-units with a "
-            "prepared housing CSV or raw ACS B25001 CSV."
-        )
-
-    rows = api_json(
-        "https://api.census.gov/data/2024/acs/acs5",
-        {
-            "get": "NAME,B25001_001E",
-            "for": "tract:*",
-            "in": "state:36 county:061",
-            "key": key,
-        },
-    )
-
-    frame = pd.DataFrame(rows[1:], columns=rows[0])
-    frame["GEOID"] = frame["state"] + frame["county"] + frame["tract"]
-    frame["total_housing_units"] = pd.to_numeric(
-        frame["B25001_001E"], errors="raise"
-    )
-    frame["housing_units_vintage"] = "ACS 2020–2024 5-year"
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    frame[["GEOID", "total_housing_units", "housing_units_vintage"]].to_csv(
-        output_path, index=False
-    )
-    print(f"Saved tract-level ACS B25001 housing units: {output_path}")
-
-
-def load_housing_units(housing_path: Path) -> pd.DataFrame:
-    """Standardize a prepared housing file or raw ACS B25001 export.
-
-    Accepted inputs
-    ---------------
-    Prepared:
-        GEOID,total_housing_units[,housing_units_vintage]
-
-    Raw ACS B25001:
-        B25001_001E plus either GEOID or state/county/tract geography columns.
-    """
-    housing = pd.read_csv(housing_path, dtype="string", low_memory=False)
-
-    if "GEOID" not in housing.columns:
-        geo_parts = {"state", "county", "tract"}
-        if geo_parts <= set(housing.columns):
-            housing["GEOID"] = (
-                housing["state"].str.zfill(2)
-                + housing["county"].str.zfill(3)
-                + housing["tract"].str.zfill(6)
-            )
-        else:
-            raise ValueError(
-                "Housing file must contain GEOID or state/county/tract columns."
-            )
-
-    housing["GEOID"] = (
-        housing["GEOID"]
-        .astype("string")
-        .str.replace(r"\D", "", regex=True)
-        .str.zfill(11)
-    )
-
-    if "total_housing_units" not in housing.columns:
-        if "B25001_001E" not in housing.columns:
-            raise ValueError(
-                "Housing file must contain total_housing_units or ACS B25001_001E."
-            )
-        housing["total_housing_units"] = housing["B25001_001E"]
-
-    housing["total_housing_units"] = pd.to_numeric(
-        housing["total_housing_units"], errors="coerce"
-    )
-
-    if "housing_units_vintage" not in housing.columns:
-        housing["housing_units_vintage"] = "ACS 2020–2024 5-year"
-    else:
-        housing["housing_units_vintage"] = (
-            housing["housing_units_vintage"]
-            .fillna("ACS 2020–2024 5-year")
-            .astype("string")
-        )
-
-    housing = housing[[
-        "GEOID", "total_housing_units", "housing_units_vintage"
-    ]].copy()
-
-    if housing["GEOID"].duplicated().any():
-        duplicates = housing.loc[
-            housing["GEOID"].duplicated(keep=False), "GEOID"
-        ].dropna().unique().tolist()
-        raise ValueError(
-            "Housing denominator contains duplicate GEOIDs: "
-            + ", ".join(duplicates[:10])
-        )
-
-    return housing
-
-
-def add_burglary_rate(output_dir: Path, housing_path: Path) -> None:
-    """Add pooled residential burglaries per 1,000 tract housing units.
-
-    Numerator: completed residential burglary complaints pooled across 2021–2025.
-    Denominator: tract-specific total housing units from ACS B25001_001E.
-    The result is a pooled five-year rate, not an annualized rate.
-    """
-    summary_path = output_dir / "public_safety_tract.csv"
-    if not summary_path.is_file():
-        raise FileNotFoundError(
-            f"Missing {summary_path}; run the initial Public Safety build first."
-        )
-
-    summary = pd.read_csv(summary_path, dtype={"GEOID": "string"})
-    summary["GEOID"] = summary["GEOID"].str.zfill(11)
-    housing = load_housing_units(housing_path)
-
-    cb3_geoids = set(summary["GEOID"].dropna())
-    available_geoids = set(housing["GEOID"].dropna())
-    missing_geoids = sorted(cb3_geoids - available_geoids)
-    if missing_geoids:
-        raise ValueError(
-            "Housing denominator is missing CB3 GEOIDs: "
-            + ", ".join(missing_geoids)
-        )
-
-    # Keep only the 31 CB3 tract denominators before the one-to-one merge.
-    housing = housing[housing["GEOID"].isin(cb3_geoids)].copy()
-
-    columns = [
-        "total_housing_units",
-        "housing_units_vintage",
-        "residential_burglary_per_1000_units",
-        "burglary_rate_numerator_period",
-        "burglary_rate_denominator_source",
-    ]
-    summary = summary.drop(columns=columns, errors="ignore").merge(
-        housing,
-        on="GEOID",
-        how="left",
-        validate="one_to_one",
-    )
-
-    denominator = summary["total_housing_units"].where(
-        summary["total_housing_units"] > 0
-    )
-    summary["residential_burglary_per_1000_units"] = (
-        summary["residential_burglary_complaints"] / denominator * 1000
-    )
-    summary["burglary_rate_numerator_period"] = "2021–2025 pooled"
-    summary["burglary_rate_denominator_source"] = (
-        "ACS B25001_001E total housing units"
-    )
-
-    summary.to_csv(summary_path, index=False)
-
-    missing_denominator = int(denominator.isna().sum())
-    print(
-        "Burglary rate saved: pooled 2021–2025 completed residential "
-        "burglary complaints per 1,000 tract housing units."
-    )
-    print(
-        f"Housing denominator source: {housing_path} "
-        f"({len(housing):,} CB3 tract rows)."
-    )
-    print(
-        f"{missing_denominator} CB3 tracts lack a positive housing-unit denominator."
-    )
 
 def fetch_nypd_calls(output_path: Path, page_size: int = 10000) -> None:
     """Download 2021–2025 call entries in CB3's bounding box, one year/page at a time."""
@@ -580,8 +388,13 @@ def clean_nypd_response_times(input_path: Path, output_dir: Path) -> None:
     for column in ["add_ts", "disp_ts", "arrivd_ts", "closng_ts"]:
         calls[column] = pd.to_datetime(calls[column], errors="coerce")
     calls = calls[calls["add_ts"].ge(START_DATE) & calls["add_ts"].lt("2026-01-01")].copy()
+    # Exclude missing arrivals and same-time entries before calculating elapsed
+    # time. Retain only positive intervals; reversed timestamps are invalid too.
+    calls = calls[
+        calls["arrivd_ts"].notna() & calls["arrivd_ts"].ne(calls["add_ts"])
+    ].copy()
     calls["response_minutes"] = (calls["arrivd_ts"] - calls["add_ts"]).dt.total_seconds() / 60
-    calls = calls[calls["response_minutes"].ge(0)].copy()
+    calls = calls[calls["response_minutes"].gt(0)].copy()
     for column in ["latitude", "longitude"]:
         calls[column] = pd.to_numeric(calls[column], errors="coerce")
     tracts = gpd.read_file(PROJECT_ROOT / "data/raw/Geography/cb3_2020_census_tracts.geojson").rename(columns={"geoid": "GEOID"})
@@ -625,23 +438,6 @@ def main() -> None:
     )
 
     parser.add_argument(
-        "--housing-units",
-        type=Path,
-        default=None,
-        help=(
-            "Prepared GEOID,total_housing_units CSV or raw ACS B25001 CSV. "
-            "If omitted, the script reuses the first existing project B25001 file."
-        ),
-    )
-    parser.add_argument(
-        "--fetch-housing-units",
-        action="store_true",
-        help=(
-            "Fetch ACS 2020–2024 5-year B25001_001E for Manhattan tracts; "
-            "requires CENSUS_API_KEY."
-        ),
-    )
-    parser.add_argument(
         "--fetch-calls",
         action="store_true",
         help=(
@@ -662,27 +458,7 @@ def main() -> None:
     parser.add_argument("--page-size", type=int, default=10000)
     args = parser.parse_args()
 
-    # Resolve housing denominator. Reuse local project data unless the user
-    # explicitly requests a fresh Census API pull.
-    if args.fetch_housing_units:
-        housing_path = args.housing_units or DEFAULT_HOUSING_CANDIDATES[0]
-        fetch_housing_units(housing_path)
-    elif args.housing_units is not None:
-        housing_path = args.housing_units
-    else:
-        housing_path = first_existing_path(DEFAULT_HOUSING_CANDIDATES)
-
-    # Resolve NYPD Calls source from LOCAL files only.
-    #
-    # The API downloader is intentionally retained above for future reuse, but
-    # its invocation is commented out so this build cannot call the NYPD endpoint.
-    # To re-enable a refresh later, restore the three commented lines below.
-    #
-    # if args.fetch_calls:
-    #     calls_path = args.calls_csv or DEFAULT_CALLS_CANDIDATES[-1]
-    #     fetch_nypd_calls(calls_path, args.page_size)
-    #
-    # Current behavior: always reuse a supplied or existing local raw CSV.
+    # Resolve NYPD Calls source from LOCAL files only (see --fetch-calls for future API refresh).
     if args.fetch_calls:
         print(
             "--fetch-calls is currently disabled; reusing a local NYPD Calls CSV instead."
@@ -705,18 +481,8 @@ def main() -> None:
         )
 
     if args.api_only:
-        did_optional_work = calls_path is not None
-        if housing_path is not None:
-            if not housing_path.is_file():
-                parser.error(f"Housing-units file not found: {housing_path}")
-            print(f"Using tract housing denominator: {housing_path}")
-            add_burglary_rate(args.output_dir, housing_path)
-            did_optional_work = True
-        if not did_optional_work:
-            parser.error(
-                "No optional local input found. Provide --housing-units or "
-                "--calls-csv, or explicitly request --fetch-housing-units."
-            )
+        if calls_path is None:
+            parser.error("No local NYPD Calls file found. Provide --calls-csv PATH.")
         return
 
     for input_path in (args.mvc, args.nypd):
@@ -728,17 +494,6 @@ def main() -> None:
     mvc = clean_mvc(args.mvc)
     violent, burglary = clean_nypd(args.nypd)
     build_cb3_outputs(mvc, violent, burglary, args.output_dir)
-    if housing_path is not None:
-        if not housing_path.is_file():
-            parser.error(f"Housing-units file not found: {housing_path}")
-        print(f"Using tract housing denominator: {housing_path}")
-        add_burglary_rate(args.output_dir, housing_path)
-    else:
-        print(
-            "Burglary rate pending: no local ACS B25001 file found. "
-            "Place acs_5yr_2024_B25001.csv under data/raw/Housing and Affordability, "
-            "pass --housing-units PATH, or explicitly use --fetch-housing-units."
-        )
     print(f"\nBuild complete. CB3 event files and tract counts saved in {args.output_dir}")
 
 
