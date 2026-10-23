@@ -13,7 +13,7 @@ jupyter: python3
 
 ## Purpose
 
-Four metrics compare **2021–2025 traffic, violent-crime, and residential-burglary counts**,
+Four metrics compare **2021–2025 traffic and violent-crime counts and residential-burglary rates**,
 plus **2021–2025 NYPD response time**, with resident demographics. Each bubble represents a tract metric at its centroid, not an
 individual incident location. Use the layer control to select a demographic
 backdrop; hover over a bubble for its value and tract. Bubble sizes are scaled
@@ -22,8 +22,12 @@ separately for each map, so compare values using each map's legend.
 These metrics describe recorded events, not individual risk estimates. Resident
 demographics describe the surrounding tract, not the people involved in events.
 Missing or invalid coordinates and events outside the CB3 tract polygons are
-excluded. A zero count denotes no matched records. Burglary is shown as the
-pooled number of completed residential burglary complaints, without a housing-unit denominator.
+excluded. Collision and complaint records with missing borough labels are retained
+when their coordinates fall within a CB3 tract. The calls snapshot was already
+filtered geographically before download, so its missing-location coverage cannot
+be assessed from that extract. See `location_review.md` for the source review.
+A zero count denotes no matched records. Burglary is shown as the
+pooled residential burglary complaints, including attempts, per 1,000 tract housing units.
 
 ```{python}
 # Reuse the same map and geometry helpers as the environment notebook.
@@ -40,7 +44,7 @@ for candidate in [Path.cwd(), *Path.cwd().parents]:
         break
 
 from src.cb3_utils import add_polygon_centroids
-from src.map_utils import build_metric_bubble_map, find_project_dir
+from src.map_utils import build_metric_bubble_map, build_grouped_bubble_map, find_project_dir
 
 PROJECT_DIR = find_project_dir()
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
@@ -52,8 +56,8 @@ ALL_METRICS = yaml.safe_load((PROJECT_DIR / "docs" / "metric_metadata.yml").read
 ## Prepare tract counts and demographic context
 
 Traffic and crime counts are calculated from clean event files and checked
-against the build’s tract summary. Response-time medians come from the clean
-response-time tract table. All 31 CB3 tracts are retained.
+against the build’s tract summary. Response-time medians come from the
+same combined tract summary. All 31 CB3 tracts are retained.
 
 ```{python}
 # Load each clean event file with tract identifiers preserved as strings.
@@ -76,7 +80,7 @@ for frame, event_id in [(mvc, "COLLISION_ID"), (violent, "CMPLNT_NUM"), (burglar
 assert burglary["PREM_TYP_DESC"].isin([
     "RESIDENCE - APT. HOUSE", "RESIDENCE - PUBLIC HOUSING", "RESIDENCE-HOUSE",
 ]).all(), "Re-run build.py to apply the residential-premise definition."
-assert burglary["CRM_ATPT_CPTD_CD"].eq("COMPLETED").all()
+assert burglary["OFNS_DESC"].eq("BURGLARY").all()
 assert burglary["LAW_CAT_CD"].eq("FELONY").all()
 assert violent["OFNS_DESC"].isin([
     "MURDER & NON-NEGL. MANSLAUGHTER", "RAPE", "ROBBERY", "FELONY ASSAULT",
@@ -87,6 +91,10 @@ assert violent["LAW_CAT_CD"].eq("FELONY").all()
 counts = {
     "ped_cyclist_injury_crashes": mvc.groupby("GEOID")["PED_CYCLIST_INJURY_CRASH"].sum(),
     "any_injury_crashes": mvc.groupby("GEOID")["ANY_INJURY_CRASH"].sum(),
+    "ped_cyclist_fatal_crashes": mvc.groupby("GEOID")["PED_CYCLIST_FATAL_CRASH"].sum(),
+    "ped_cyclist_nonfatal_injury_crashes": mvc.groupby("GEOID")["PED_CYCLIST_NONFATAL_INJURY_CRASH"].sum(),
+    "ped_cyclist_injury_or_fatal_crashes": mvc.groupby("GEOID")["PED_CYCLIST_INJURY_OR_FATAL_CRASH"].sum(),
+    "any_injury_or_fatal_crashes": mvc.groupby("GEOID")["ANY_INJURY_OR_FATAL_CRASH"].sum(),
     "violent_crime_complaints": violent.groupby("GEOID").size(),
     "residential_burglary_complaints": burglary.groupby("GEOID").size(),
 }
@@ -98,9 +106,20 @@ for metric, values in counts.items():
         check_names=False, check_dtype=False,
     )
 
+# Use the tract-specific denominator and keep missing/nonpositive units unavailable.
+RATE_METRIC = "residential_burglary_per_1000_units"
+for column in [RATE_METRIC, "total_housing_units", "housing_units_vintage"]:
+    tracts[column] = tracts["GEOID"].map(summary[column])
+expected_rate = (tracts["residential_burglary_complaints"]
+                 / tracts["total_housing_units"].where(tracts["total_housing_units"] > 0) * 1000)
+pd.testing.assert_series_equal(tracts[RATE_METRIC], expected_rate, check_names=False)
+tracts["burglary_rate_display"] = tracts[RATE_METRIC].map(
+    lambda value: f"{value:.2f}" if pd.notna(value) else "Not available"
+)
+
 # Join response-time medians without filling missing times with zero.
 RESPONSE_METRIC = "nypd_entry_to_arrival_median_minutes"
-response = pd.read_csv(CLEAN_DIR / "nypd_response_time_tract.csv", dtype={"GEOID": "string"})
+response = summary[[RESPONSE_METRIC, "nypd_response_valid_entries"]].reset_index()
 response_events = pd.read_csv(
     CLEAN_DIR / "nypd_response_time_clean.csv", usecols=["add_ts", "arrivd_ts", "response_minutes"], parse_dates=["add_ts", "arrivd_ts"],
 )
@@ -119,10 +138,12 @@ tracts["response_minutes_display"] = tracts[RESPONSE_METRIC].map(
 )
 
 # Metadata is the single source of map labels, units, palettes, and filenames.
-MAP_METRICS = ["ped_cyclist_injury_crashes", "violent_crime_complaints", "residential_burglary_complaints", RESPONSE_METRIC]
+TRAFFIC_SLICES = ["ped_cyclist_nonfatal_injury_crashes", "ped_cyclist_fatal_crashes"]
+TRAFFIC_METRIC = "ped_cyclist_injury_or_fatal_crashes"
+MAP_METRICS = [TRAFFIC_METRIC, *TRAFFIC_SLICES, "violent_crime_complaints", RATE_METRIC, RESPONSE_METRIC]
 METRIC_SPECS = {
     key: {"dimension": ALL_METRICS[key]["short_label"], "label": ALL_METRICS[key]["label"],
-          "unit": ALL_METRICS[key]["unit"], "filename": ALL_METRICS[key]["filename"]}
+          "unit": ALL_METRICS[key]["unit"], "filename": ALL_METRICS[key].get("filename")}
     for key in MAP_METRICS
 }
 DEMOGRAPHIC_SPECS = {
@@ -169,6 +190,11 @@ def create_metric_map(metric):
             "Median minutes (3 decimals)",
             "Valid timing entries",
         ]
+    elif metric == RATE_METRIC:
+        tooltip_fields = ["tract_label", "nta_name", "burglary_rate_display",
+                          "residential_burglary_complaints", "total_housing_units", "housing_units_vintage"]
+        tooltip_aliases = ["Census tract", "NTA", "Complaints per 1K units (2 decimals)",
+                           "Complaints including attempts", "Total housing units", "Housing-unit vintage"]
     else:
         tooltip_fields = ["tract_label", "nta_name"]
         tooltip_aliases = ["Census tract", "NTA"]
@@ -196,18 +222,39 @@ saved HTML maps are embedded by file reference, as in the environment notebook.
 
 ## Traffic safety
 
-**Pedestrian/cyclist injury crashes, all ages.** Each qualifying collision has
-at least one pedestrian or cyclist injured and is counted once, even if several
-people were injured. The Crashes file already supplies the injury counts needed
-for this measure; this build does not join the Person file or restrict age.
+**Pedestrian/cyclist injury or fatal crashes, all ages, pooled 2021–2025.**
+Each pie is sized by the total number of qualifying collisions in a tract.
+The slices show two mutually exclusive outcomes:
 
-There are 1,364 qualifying crashes across CB3, with 3–191 per tract. We retain
-this specific measure rather than replace it with the broader 2,257 all-injury
-crashes. The table above preserves that fallback for comparison. Bubbles show
-traffic hazard intensity alongside the selected resident-demographic backdrop.
+- **Injury without pedestrian/cyclist fatality:** at least one pedestrian/cyclist
+  injured, with no pedestrian/cyclist killed.
+- **Pedestrian/cyclist fatality:** at least one pedestrian/cyclist killed,
+  whether or not the collision also caused injuries.
+
+A crash involving both injury and death appears only in the fatality slice.
+Records without usable coordinates remain excluded; unresolved addresses have
+not been geocoded, so these are counts of geolocated crashes.
+These are collision counts, not counts of injured or killed people. Motorist
+fatalities do not determine the pedestrian/cyclist slices. The broader fallback
+counts collisions with any person injured or killed. Raw fatality fields are
+retained in the clean crash file. Small fatality shares may form narrow slices;
+hover over the pie for counts. No Person-file join or age filter is applied.
 
 ```{python}
-create_metric_map("ped_cyclist_injury_crashes")
+# Confirm that pie slices partition the total, then use the shared pie builder.
+assert tracts[TRAFFIC_SLICES].sum(axis=1).eq(tracts[TRAFFIC_METRIC]).all()
+traffic_spec = METRIC_SPECS[TRAFFIC_METRIC]
+traffic_output = MAP_OUTPUT_DIR / traffic_spec["filename"]
+build_grouped_bubble_map(
+    tracts, METRIC_SPECS, DEMOGRAPHIC_SPECS, TRAFFIC_SLICES,
+    title=f"CB3 Public Safety: {traffic_spec['dimension']}",
+    subtitle="2021–2025. Pie size: qualifying collisions. Slices: pedestrian/cyclist outcomes. Select a demographic backdrop.",
+    output_path=traffic_output,
+    combine_as_pie=True,
+    pie_name=traffic_spec["dimension"],
+    pie_legend_title="Pedestrian/cyclist outcome",
+)
+IFrame(f"../../maps/public_safety/{traffic_output.name}", width="100%", height=700)
 ```
 
 ## Violent crime exposure
@@ -224,18 +271,21 @@ create_metric_map("violent_crime_complaints")
 
 ## Residential burglary exposure
 
-**Completed felony burglaries at residential premises.** The premise filter
-includes `RESIDENCE - APT. HOUSE`, `RESIDENCE - PUBLIC HOUSING`, and
-`RESIDENCE-HOUSE`; attempted burglaries and other or unspecified premises are
-excluded. This follows the requested premise-type definition, replacing the
-earlier offense-description definition. It yields 968 matched CB3 complaints.
+**Residential felony burglary complaints, including attempts.** The premise
+filter includes `RESIDENCE - APT. HOUSE`, `RESIDENCE - PUBLIC HOUSING`, and
+`RESIDENCE-HOUSE`. Other or unspecified premise types are excluded. No
+completion-status filter is applied, matching the treatment of violent crimes.
 
-The map shows **tract-level counts of completed residential burglary complaints,
-pooled 2021–2025**. Each qualifying complaint is counted once. These are counts
-of reported events, not rates per housing unit or estimates of individual risk.
+The map shows **residential burglary complaints ÷ tract housing units × 1,000**,
+including attempted and completed complaints pooled across 2021–2025. Each
+complaint is counted once. The local ACS 2024 five-year total housing-unit
+estimate (`B25001_001E`, covering 2020–2024) includes occupied and vacant units.
+Each tract uses its own denominator. This is a pooled rate, not an annual rate
+or the percentage of homes burgled. Missing/nonpositive denominators are
+unavailable, not zero. Hover over a bubble for the count, denominator, and rate.
 
 ```{python}
-create_metric_map("residential_burglary_complaints")
+create_metric_map(RATE_METRIC)
 ```
 
 ## NYPD response time
