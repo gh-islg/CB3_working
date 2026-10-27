@@ -3,7 +3,7 @@
 Metrics:
 - Traffic: NYC MVC Crashes with a pedestrian/cyclist injured or killed. Fatal
   crashes take precedence over nonfatal injury crashes in the pie. Retain raw
-  casualty counts, including motorists; the fallback covers any person injured
+  casualty counts; the fallback covers any person injured
   or killed. No Person-file join.
 - Violent crime: NYPD Historic felony murder/non-negligent manslaughter, rape,
   robbery and felony assault, including attempts; deduplicate by CMPLNT_NUM.
@@ -239,7 +239,6 @@ def clean_mvc(input_path: Path, geocodes_path: Path | None = None) -> pd.DataFra
         "NUMBER OF PERSONS KILLED",
         "NUMBER OF PEDESTRIANS KILLED",
         "NUMBER OF CYCLIST KILLED",
-        "NUMBER OF MOTORIST KILLED",
     ]
     required_cols = [
         "CRASH DATE",
@@ -271,7 +270,7 @@ def clean_mvc(input_path: Path, geocodes_path: Path | None = None) -> pd.DataFra
     # Fallback metric if the preferred metric is too sparse.
     mvc["ANY_INJURY_CRASH"] = mvc["NUMBER OF PERSONS INJURED"] > 0
 
-    # Pedestrian/cyclist fatalities take precedence; motorist deaths do not define slices.
+    # Pedestrian/cyclist fatalities take precedence in the pie slices.
     mvc["PED_CYCLIST_FATAL_CRASH"] = (
         mvc["NUMBER OF PEDESTRIANS KILLED"].gt(0)
         | mvc["NUMBER OF CYCLIST KILLED"].gt(0)
