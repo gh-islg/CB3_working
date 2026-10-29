@@ -1,225 +1,350 @@
+import os
 from pathlib import Path
+
+import numpy as np
 import pandas as pd
+import requests
+
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 RAW_DIR = PROJECT_DIR / "data" / "raw" / "Baseline"
 CLEAN_DIR = PROJECT_DIR / "data" / "clean"
-CLEAN_DIR.mkdir(parents=True, exist_ok=True)
 
-OUT = CLEAN_DIR / "tract_baseline_profile_clean.csv"
+OUTPUT_PATH = CLEAN_DIR / "nyc_tract_baseline_profile_clean.csv"
 
-def make_geoid(df):
-    if "GEOID" in df.columns:
-        return df["GEOID"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(11)
-    if "geoid" in df.columns:
-        return df["geoid"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(11)
+ACS_YEAR = 2024
+ACS_ENDPOINT = f"https://api.census.gov/data/{ACS_YEAR}/acs/acs5"
+STATE = "36"
 
-    state = df["state"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(2)
-    county = df["county"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(3)
-    tract = df["tract"].astype(str).str.replace(r"\.0$", "", regex=True).str.zfill(6)
-    return state + county + tract
+NYC_COUNTIES = {
+    "005": "Bronx",
+    "047": "Brooklyn",
+    "061": "Manhattan",
+    "081": "Queens",
+    "085": "Staten Island",
+}
 
-def read_acs(filename):
-    df = pd.read_csv(RAW_DIR / filename, dtype=str)
-    df["GEOID"] = make_geoid(df)
-    for col in df.columns:
-        if col not in {"GEOID", "NAME", "state", "county", "tract", "geoid"}:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
+# ---------------------------------------------------------------------------
+# CB3 baseline source-variable logic
+# ---------------------------------------------------------------------------
 
-def safe_div(num, den):
-    return (num / den).where(den.notna() & (den != 0))
-
-def require_cols(df, cols, source):
-    missing = [c for c in cols if c not in df.columns]
-    if missing:
-        raise KeyError(f"{source} is missing columns: {missing}")
-
-# Use health_tract.csv if available to restrict to CB3 tracts.
-health_tract_path = CLEAN_DIR / "health_tract.csv"
-cb3_geoids = None
-if health_tract_path.exists():
-    cb3_geoids = pd.read_csv(health_tract_path, dtype={"GEOID": str})["GEOID"].astype(str).str.zfill(11)
-
-# -----------------------
-# Age from B01001
-# -----------------------
-age = read_acs("acs_5yr_2024_B01001.csv")
-
-age_0_19_cols = [
-    "B01001_003E", "B01001_004E", "B01001_005E", "B01001_006E", "B01001_007E",
-    "B01001_027E", "B01001_028E", "B01001_029E", "B01001_030E", "B01001_031E",
+# B01001 — Sex by Age
+AGE_0_19 = [
+    *[f"B01001_{i:03d}E" for i in range(3, 8)],
+    *[f"B01001_{i:03d}E" for i in range(27, 32)],
 ]
-age_65_plus_cols = [
-    "B01001_020E", "B01001_021E", "B01001_022E", "B01001_023E", "B01001_024E", "B01001_025E",
-    "B01001_044E", "B01001_045E", "B01001_046E", "B01001_047E", "B01001_048E", "B01001_049E",
+AGE_20_64 = [
+    *[f"B01001_{i:03d}E" for i in range(8, 20)],
+    *[f"B01001_{i:03d}E" for i in range(32, 44)],
+]
+AGE_65_PLUS = [
+    *[f"B01001_{i:03d}E" for i in range(20, 26)],
+    *[f"B01001_{i:03d}E" for i in range(44, 50)],
 ]
 
-require_cols(age, ["B01003_001E"] + age_0_19_cols + age_65_plus_cols, "B01001")
+# B17020 — Poverty Status by Age existing CB3 baseline's "senior" poverty fields use AGE 60+,
+# not 65+. B17020 groups seniors as 60–74, 75–84, and 85+.
+SENIOR_BELOW_POVERTY = [
+    "B17020_007E",  # 60 to 74 years, below poverty
+    "B17020_008E",  # 75 to 84 years, below poverty
+    "B17020_009E",  # 85 years and over, below poverty
+]
+SENIOR_AT_OR_ABOVE_POVERTY = [
+    "B17020_015E",  # 60 to 74 years, at/above poverty
+    "B17020_016E",  # 75 to 84 years, at/above poverty
+    "B17020_017E",  # 85 years and over, at/above poverty
+]
 
-age["total_population"] = age["B01003_001E"]
-age["age_0_to_19_population"] = age[age_0_19_cols].sum(axis=1, min_count=1)
-age["age_65_plus_population"] = age[age_65_plus_cols].sum(axis=1, min_count=1)
-age["age_20_to_64_population"] = (
-    age["total_population"] - age["age_0_to_19_population"] - age["age_65_plus_population"]
-)
+TABLE_VARIABLES = {
+    "B01001": [
+        "B01001_001E",  # total population
+        "B01001_002E",  # male population
+        "B01001_026E",  # female population
+        *AGE_0_19,
+        *AGE_20_64,
+        *AGE_65_PLUS,
+    ],
+    "B03002": [
+        "B03002_001E",  # race/ethnicity total
+        "B03002_003E",  # White alone, not Hispanic
+        "B03002_004E",  # Black alone, not Hispanic
+        "B03002_006E",  # Asian alone, not Hispanic
+        "B03002_012E",  # Hispanic or Latino
+    ],
+    "B19013": [
+        "B19013_001E",  # median household income
+    ],
+    "B19001": [
+        "B19001_001E",  # household income universe
+    ],
+    "B17020": [
+        "B17020_001E",  # poverty-status total
+        "B17020_002E",  # below poverty total
+        "B17020_010E",  # at/above poverty total
+        *SENIOR_BELOW_POVERTY,
+        *SENIOR_AT_OR_ABOVE_POVERTY,
+    ],
+    "C16002": [
+        "C16002_001E",  # total households
+        "C16002_004E",  # limited English speaking: Spanish
+        "C16002_007E",  # other Indo-European languages
+        "C16002_010E",  # Asian and Pacific Island languages
+        "C16002_013E",  # other languages
+    ],
+}
 
-age["age_0_to_19_share"] = safe_div(age["age_0_to_19_population"], age["total_population"]) * 100
-age["age_20_to_64_share"] = safe_div(age["age_20_to_64_population"], age["total_population"]) * 100
-age["age_65_plus_share"] = safe_div(age["age_65_plus_population"], age["total_population"]) * 100
 
-age_keep = age[
-    [
-        "GEOID",
-        "total_population",
-        "age_0_to_19_share",
-        "age_20_to_64_share",
-        "age_65_plus_share",
-    ]
-].copy()
-
-# -----------------------
-# Race / ethnicity from B03002
-# -----------------------
-race = read_acs("acs_5yr_2024_B03002.csv")
-require_cols(
-    race,
-    ["B03002_001E", "B03002_003E", "B03002_004E", "B03002_006E", "B03002_012E"],
-    "B03002",
-)
-
-race["race_ethnicity_total"] = race["B03002_001E"]
-race["white_non_hispanic_share"] = safe_div(race["B03002_003E"], race["race_ethnicity_total"]) * 100
-race["black_non_hispanic_share"] = safe_div(race["B03002_004E"], race["race_ethnicity_total"]) * 100
-race["asian_non_hispanic_share"] = safe_div(race["B03002_006E"], race["race_ethnicity_total"]) * 100
-race["hispanic_share"] = safe_div(race["B03002_012E"], race["race_ethnicity_total"]) * 100
-
-race_keep = race[
-    [
-        "GEOID",
-        "white_non_hispanic_share",
-        "black_non_hispanic_share",
-        "asian_non_hispanic_share",
-        "hispanic_share",
-    ]
-].copy()
-
-# -----------------------
-# Median household income from B19013
-# -----------------------
-income = read_acs("acs_5yr_2024_B19013.csv")
-require_cols(income, ["B19013_001E"], "B19013")
-
-income_keep = income[["GEOID", "B19013_001E"]].rename(
-    columns={"B19013_001E": "median_household_income"}
-)
-
-# -----------------------
-# LEP household share from C16002
-# -----------------------
-lep = read_acs("acs_5yr_2024_C16002.csv")
-require_cols(lep, ["C16002_001E", "C16002_004E", "C16002_007E", "C16002_010E", "C16002_013E"], "C16002")
-
-lep["total_households_language_universe"] = lep["C16002_001E"]
-lep["lep_households"] = lep[["C16002_004E", "C16002_007E", "C16002_010E", "C16002_013E"]].sum(axis=1, min_count=1)
-lep["lep_household_share"] = safe_div(
-    lep["lep_households"],
-    lep["total_households_language_universe"],
-) * 100
-
-lep_keep = lep[
-    [
-        "GEOID",
-        "total_households_language_universe",
-        "lep_households",
-        "lep_household_share",
-    ]
-].copy()
-
-# -----------------------
-# Poverty: prefer existing clean economic-food.csv if available
-# -----------------------
-poverty_keep = None
-economic_path = CLEAN_DIR / "economic-food.csv"
-if economic_path.exists():
-    econ = pd.read_csv(economic_path, dtype={"GEOID": str, "geoid": str})
-    econ["GEOID"] = make_geoid(econ)
-
-    rename = {}
-    if "poverty_rate_pct" in econ.columns and "poverty_rate" not in econ.columns:
-        rename["poverty_rate_pct"] = "poverty_rate"
-    if "senior_poverty_rate_pct" in econ.columns and "senior_poverty_rate" not in econ.columns:
-        rename["senior_poverty_rate_pct"] = "senior_poverty_rate"
-    econ = econ.rename(columns=rename)
-
-    keep_cols = ["GEOID"] + [
-        col for col in ["poverty_rate", "senior_poverty_rate"]
-        if col in econ.columns
-    ]
-    if len(keep_cols) > 1:
-        poverty_keep = econ[keep_cols].copy()
-
-# If economic-food.csv is not usable, try standard B17020 columns.
-if poverty_keep is None:
-    poverty = read_acs("acs_5yr_2024_B17020.csv")
-
-    if {"B17020_001E", "B17020_002E"}.issubset(poverty.columns):
-        poverty["poverty_rate"] = safe_div(poverty["B17020_002E"], poverty["B17020_001E"]) * 100
-
-        senior_cols = ["B17020_007E", "B17020_008E", "B17020_014E", "B17020_015E"]
-        if set(senior_cols).issubset(poverty.columns):
-            senior_poverty_num = poverty["B17020_007E"] + poverty["B17020_008E"]
-            senior_poverty_den = (
-                poverty["B17020_007E"]
-                + poverty["B17020_008E"]
-                + poverty["B17020_014E"]
-                + poverty["B17020_015E"]
-            )
-            poverty["senior_poverty_rate"] = safe_div(senior_poverty_num, senior_poverty_den) * 100
-
-        keep_cols = ["GEOID"] + [
-            col for col in ["poverty_rate", "senior_poverty_rate"]
-            if col in poverty.columns
-        ]
-        poverty_keep = poverty[keep_cols].copy()
-    else:
-        poverty_keep = pd.DataFrame({"GEOID": age_keep["GEOID"]})
-
-# -----------------------
-# Merge
-# -----------------------
-baseline = age_keep.merge(race_keep, on="GEOID", how="outer", validate="one_to_one")
-baseline = baseline.merge(income_keep, on="GEOID", how="outer", validate="one_to_one")
-baseline = baseline.merge(lep_keep, on="GEOID", how="outer", validate="one_to_one")
-baseline = baseline.merge(poverty_keep, on="GEOID", how="outer", validate="one_to_one")
-
-if cb3_geoids is not None:
-    baseline = baseline[baseline["GEOID"].isin(cb3_geoids)].copy()
-
-baseline = baseline.sort_values("GEOID").reset_index(drop=True)
-
-wanted = [
-    "GEOID",
+OUTPUT_COLUMNS = [
+    "geoid",
+    "tract_name",
     "total_population",
-    "median_household_income",
+    "male_population",
+    "female_population",
+    "age_0_to_19_population",
+    "age_20_to_64_population",
+    "age_65_plus_population",
+    "male_share",
+    "female_share",
     "age_0_to_19_share",
     "age_20_to_64_share",
     "age_65_plus_share",
+    "race_ethnicity_total_population",
+    "white_non_hispanic_population",
+    "black_non_hispanic_population",
+    "asian_non_hispanic_population",
+    "hispanic_population",
     "white_non_hispanic_share",
     "black_non_hispanic_share",
     "asian_non_hispanic_share",
     "hispanic_share",
-    "lep_household_share",
+    "median_household_income",
+    "total_households_income_universe",
+    "poverty_status_total",
+    "below_poverty_total",
+    "at_or_above_poverty_total",
+    "senior_poverty_population",
+    "senior_total_poverty_universe",
     "poverty_rate",
     "senior_poverty_rate",
+    "total_households_language_universe",
+    "lep_households",
+    "lep_household_share",
 ]
 
-baseline = baseline[[col for col in wanted if col in baseline.columns]]
-baseline.to_csv(OUT, index=False)
 
-print(f"Wrote {OUT}")
-print(f"Rows: {len(baseline)}")
-print("Columns:")
-for col in baseline.columns:
-    nonnull = baseline[col].notna().sum()
-    print(f"  {col}: {nonnull} non-null")
+def safe_pct(numerator: pd.Series, denominator: pd.Series) -> pd.Series:
+    numerator = pd.to_numeric(numerator, errors="coerce")
+    denominator = pd.to_numeric(denominator, errors="coerce")
+    out = pd.Series(np.nan, index=denominator.index, dtype="float64")
+    valid = denominator > 0
+    out.loc[valid] = numerator.loc[valid] / denominator.loc[valid] * 100
+    return out
+
+
+def fetch_table(table: str, variables: list[str]) -> pd.DataFrame:
+    key = os.environ.get("CENSUS_API_KEY")
+    if not key:
+        raise RuntimeError(
+            "CENSUS_API_KEY is not set. Export your Census API key before "
+            "running this script."
+        )
+
+    frames = []
+
+    for county, borough in NYC_COUNTIES.items():
+        params = {
+            "get": ",".join(["NAME", *variables]),
+            "for": "tract:*",
+            "in": f"state:{STATE} county:{county}",
+            "key": key,
+        }
+
+        response = requests.get(ACS_ENDPOINT, params=params, timeout=120)
+        response.raise_for_status()
+
+        try:
+            rows = response.json()
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Census API returned non-JSON data for {table} / {borough}. "
+                f"HTTP {response.status_code}: {response.text[:500]}"
+            ) from exc
+
+        frame = pd.DataFrame(rows[1:], columns=rows[0])
+        frame["geoid"] = frame["state"] + frame["county"] + frame["tract"]
+        frame["borough"] = borough
+
+        for col in variables:
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+
+        frames.append(frame)
+        print(f"{table}: fetched {len(frame):,} tracts for {borough}")
+
+    out = pd.concat(frames, ignore_index=True)
+    out["geoid"] = out["geoid"].astype("string").str.zfill(11)
+
+    if out["geoid"].duplicated().any():
+        duplicates = out.loc[out["geoid"].duplicated(), "geoid"].tolist()
+        raise ValueError(f"{table}: duplicate GEOIDs found: {duplicates[:10]}")
+
+    RAW_DIR.mkdir(parents=True, exist_ok=True)
+    raw_path = RAW_DIR / f"acs_5yr_{ACS_YEAR}_{table}.csv"
+    out.to_csv(raw_path, index=False)
+    print(f"{table}: wrote {raw_path}")
+
+    return out
+
+
+def build_baseline(tables: dict[str, pd.DataFrame]) -> pd.DataFrame:
+    # -----------------------------------------------------------------------
+    # Population / sex / age — B01001
+    # -----------------------------------------------------------------------
+    age = tables["B01001"].copy()
+
+    out = age[["geoid", "NAME"]].rename(columns={"NAME": "tract_name"}).copy()
+
+    out["total_population"] = age["B01001_001E"]
+    out["male_population"] = age["B01001_002E"]
+    out["female_population"] = age["B01001_026E"]
+
+    out["age_0_to_19_population"] = age[AGE_0_19].sum(axis=1, min_count=1)
+    out["age_20_to_64_population"] = age[AGE_20_64].sum(axis=1, min_count=1)
+    out["age_65_plus_population"] = age[AGE_65_PLUS].sum(axis=1, min_count=1)
+
+    out["male_share"] = safe_pct(out["male_population"], out["total_population"])
+    out["female_share"] = safe_pct(out["female_population"], out["total_population"])
+    out["age_0_to_19_share"] = safe_pct(out["age_0_to_19_population"], out["total_population"])
+    out["age_20_to_64_share"] = safe_pct(out["age_20_to_64_population"], out["total_population"])
+    out["age_65_plus_share"] = safe_pct(out["age_65_plus_population"], out["total_population"])
+
+    # -----------------------------------------------------------------------
+    # Race / ethnicity — B03002
+    # -----------------------------------------------------------------------
+    race = tables["B03002"].copy()
+    race_metrics = pd.DataFrame({
+        "geoid": race["geoid"],
+        "race_ethnicity_total_population": race["B03002_001E"],
+        "white_non_hispanic_population": race["B03002_003E"],
+        "black_non_hispanic_population": race["B03002_004E"],
+        "asian_non_hispanic_population": race["B03002_006E"],
+        "hispanic_population": race["B03002_012E"],
+    })
+
+    race_metrics["white_non_hispanic_share"] = safe_pct(
+        race_metrics["white_non_hispanic_population"],
+        race_metrics["race_ethnicity_total_population"],
+    )
+    race_metrics["black_non_hispanic_share"] = safe_pct(
+        race_metrics["black_non_hispanic_population"],
+        race_metrics["race_ethnicity_total_population"],
+    )
+    race_metrics["asian_non_hispanic_share"] = safe_pct(
+        race_metrics["asian_non_hispanic_population"],
+        race_metrics["race_ethnicity_total_population"],
+    )
+    race_metrics["hispanic_share"] = safe_pct(
+        race_metrics["hispanic_population"],
+        race_metrics["race_ethnicity_total_population"],
+    )
+
+    out = out.merge(race_metrics, on="geoid", how="left", validate="one_to_one")
+
+    # -----------------------------------------------------------------------
+    # Household income — B19013 + B19001
+    # -----------------------------------------------------------------------
+    median_income = tables["B19013"][["geoid", "B19013_001E"]].rename(
+        columns={"B19013_001E": "median_household_income"}
+    )
+    median_income.loc[
+        median_income["median_household_income"] < 0,
+        "median_household_income"
+    ] = np.nan
+
+    income_universe = tables["B19001"][["geoid", "B19001_001E"]].rename(
+        columns={"B19001_001E": "total_households_income_universe"}
+    )
+
+    out = out.merge(median_income, on="geoid", how="left", validate="one_to_one")
+    out = out.merge(income_universe, on="geoid", how="left", validate="one_to_one")
+
+    # -----------------------------------------------------------------------
+    # Poverty / senior poverty — B17020
+    #
+    # Match the existing CB3 baseline exactly:
+    # - overall poverty = all ages
+    # - "senior" poverty = age 60+ (60–74, 75–84, 85+)
+    # -----------------------------------------------------------------------
+    poverty = tables["B17020"].copy()
+    poverty_metrics = pd.DataFrame({
+        "geoid": poverty["geoid"],
+        "poverty_status_total": poverty["B17020_001E"],
+        "below_poverty_total": poverty["B17020_002E"],
+        "at_or_above_poverty_total": poverty["B17020_010E"],
+    })
+
+    poverty_metrics["senior_poverty_population"] = poverty[
+        SENIOR_BELOW_POVERTY
+    ].sum(axis=1, min_count=1)
+
+    senior_at_or_above = poverty[
+        SENIOR_AT_OR_ABOVE_POVERTY
+    ].sum(axis=1, min_count=1)
+
+    poverty_metrics["senior_total_poverty_universe"] = (
+        poverty_metrics["senior_poverty_population"] + senior_at_or_above
+    )
+
+    poverty_metrics["poverty_rate"] = safe_pct(
+        poverty_metrics["below_poverty_total"],
+        poverty_metrics["poverty_status_total"],
+    )
+    poverty_metrics["senior_poverty_rate"] = safe_pct(
+        poverty_metrics["senior_poverty_population"],
+        poverty_metrics["senior_total_poverty_universe"],
+    )
+
+    out = out.merge(poverty_metrics, on="geoid", how="left", validate="one_to_one")
+
+    # C16002: limited-English-speaking households across four language groups.
+    language = tables["C16002"].copy()
+
+    language_metrics = pd.DataFrame({
+        "geoid": language["geoid"],
+        "total_households_language_universe": language["C16002_001E"],
+    })
+    language_metrics["lep_households"] = language[
+        ["C16002_004E", "C16002_007E", "C16002_010E", "C16002_013E"]
+    ].sum(axis=1, min_count=1)
+    language_metrics["lep_household_share"] = safe_pct(
+        language_metrics["lep_households"],
+        language_metrics["total_households_language_universe"],
+    )
+
+    out = out.merge(language_metrics, on="geoid", how="left", validate="one_to_one")
+
+    out = out[OUTPUT_COLUMNS].sort_values("geoid").reset_index(drop=True)
+
+    assert out["geoid"].is_unique
+    assert out["geoid"].str.fullmatch(r"\d{11}").all()
+
+    return out
+
+
+def main() -> None:
+    tables = {
+        table: fetch_table(table, variables)
+        for table, variables in TABLE_VARIABLES.items()
+    }
+
+    baseline = build_baseline(tables)
+
+    CLEAN_DIR.mkdir(parents=True, exist_ok=True)
+    baseline.to_csv(OUTPUT_PATH, index=False)
+
+    print(f"\nWrote NYC baseline: {OUTPUT_PATH}")
+    print(f"Rows: {len(baseline):,}")
+    print(f"Columns: {len(baseline.columns)}")
+
+
+if __name__ == "__main__":
+    main()

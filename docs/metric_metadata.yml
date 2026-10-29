@@ -1593,3 +1593,171 @@ mltfam_walkup_rate:
     - "#f03b20"
     - "#bd0026"
 
+# --- Public Safety ---
+ped_cyclist_injury_crashes:
+  domain: public_safety
+  short_label: Pedestrian/cyclist injury crashes
+  label: Pedestrian/cyclist injury crashes, 2021–2025
+  description: >
+    Collisions with at least one pedestrian or cyclist injured.
+    Five-year count of geolocated events strictly within CB3 2020 census tracts.
+    Invalid coordinates and unmatched points are excluded; zeros denote no matched records.
+  unit: " events"
+  source: NYC Motor Vehicle Collisions
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: count
+  filename: traffic_safety.html
+
+any_injury_crashes:
+  domain: public_safety
+  short_label: All injury crashes
+  label: All injury crashes, 2021–2025
+  description: >
+    Collisions with at least one person injured.
+    Five-year count of geolocated events strictly within CB3 2020 census tracts.
+    Invalid coordinates and unmatched points are excluded; zeros denote no matched records.
+  unit: " events"
+  source: NYC Motor Vehicle Collisions
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: count
+
+violent_crime_complaints:
+  domain: public_safety
+  short_label: Violent felony complaints
+  label: Violent felony complaints, 2021–2025
+  description: >
+    Murder and non-negligent manslaughter, rape, robbery, and felony assault complaints classified as felonies; includes attempted and completed offenses.
+    Five-year count of geolocated events strictly within CB3 2020 census tracts.
+    Invalid coordinates and unmatched points are excluded; zeros denote no matched records.
+  unit: " events"
+  source: NYPD Complaint Data Historic
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: count
+  filename: violent_crime_exposure.html
+
+residential_burglary_complaints:
+  domain: public_safety
+  short_label: Residential burglaries (including attempts)
+  label: Residential burglary complaints including attempts, 2021–2025
+  description: >
+    Felony burglary complaints at apartment houses, public housing, or houses, selected using PREM_TYP_DESC. Includes attempted and completed complaints without filtering completion status. Excludes other or unspecified premise types.
+    Five-year count of geolocated events strictly within CB3 2020 census tracts.
+    Invalid coordinates and unmatched points are excluded; zeros denote no matched records.
+  unit: " events"
+  source: NYPD Complaint Data Historic
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: count
+
+  filename: residential_burglary_exposure.html
+
+nypd_entry_to_arrival_median_minutes:
+  domain: public_safety
+  short_label: NYPD response time
+  label: "Median time from call entry to officer arrival (minutes), 2021–2025"
+  description: >
+    Median of (ARRIVD_TS minus ADD_TS) in minutes for geolocated ICAD entries.
+    Excludes missing arrival/entry timestamps, equal entry and arrival timestamps,
+    and negative intervals. These filters reduce self-initiated entries but do
+    not identify all public 911 calls. Raw records are preserved before cleaning.
+  unit: " min"
+  source: NYPD Calls for Service Historic (d6zx-ckhd)
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: number
+  filename: nypd_response_time.html
+
+nypd_response_valid_entries:
+  domain: public_safety
+  short_label: Valid NYPD timing entries
+  label: Number of entries contributing to NYPD timing median
+  description: Entries with valid strictly positive entry-to-arrival intervals and CB3 tract matches.
+  unit: " entries"
+  source: NYPD Calls for Service Historic (d6zx-ckhd)
+  year: "2021–2025"
+  geography: Census tract
+  display_format: count
+
+ped_cyclist_injury_or_fatal_crashes:
+  domain: public_safety
+  short_label: Pedestrian/cyclist injury or fatal crashes
+  label: "Pedestrian/cyclist injury or fatal crashes, 2021–2025"
+  description: >
+    Collisions with at least one pedestrian or cyclist injured or killed,
+    counted once per COLLISION_ID. Pie slices partition the count into crashes
+    with pedestrian/cyclist fatalities and injury crashes without such fatalities.
+  unit: " crashes"
+  source: NYC Motor Vehicle Collisions, Crashes
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: count
+  filename: traffic_safety.html
+
+ped_cyclist_nonfatal_injury_crashes:
+  domain: public_safety
+  short_label: Injury without pedestrian/cyclist fatality
+  label: Pedestrian/cyclist injury crashes without a pedestrian/cyclist fatality
+  description: >
+    Collisions with a pedestrian/cyclist injury and no pedestrian/cyclist death.
+    Mutually exclusive with ped_cyclist_fatal_crashes. Motorist fatalities do not
+    determine this pedestrian/cyclist outcome category.
+  unit: " crashes"
+  source: NYC Motor Vehicle Collisions, Crashes
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: count
+
+ped_cyclist_fatal_crashes:
+  domain: public_safety
+  short_label: Pedestrian/cyclist fatality
+  label: Crashes with at least one pedestrian or cyclist killed
+  description: >
+    Collisions with at least one pedestrian/cyclist death, including crashes
+    that also have injuries. Counted once per collision, not per person killed.
+  unit: " crashes"
+  source: NYC Motor Vehicle Collisions, Crashes
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: count
+
+any_injury_or_fatal_crashes:
+  domain: public_safety
+  short_label: All injury or fatal crashes
+  label: "Crashes with any person injured or killed, 2021–2025"
+  description: Broader fallback counting collisions with at least one person injured or killed, irrespective of road-user type.
+  unit: " crashes"
+  source: NYC Motor Vehicle Collisions, Crashes
+  year: "2021–2025"
+  geography: Census tract
+  higher_is: worse
+  display_format: count
+
+
+residential_burglary_per_1000_units:
+  domain: public_safety
+  short_label: Residential burglaries per 1,000 housing units
+  label: "Residential burglaries including attempts per 1,000 housing units, 2021–2025"
+  description: >
+    Residential felony burglary complaints, including attempts and completed
+    offenses, pooled over 2021–2025 divided by tract-specific total housing units
+    and multiplied by 1,000. Denominator is local ACS 2024 five-year B25001_001E
+    (2020–2024), including occupied and vacant units. Not annualized; missing
+    or nonpositive denominators yield unavailable rates.
+  unit: " per 1K units"
+  source: NYPD Complaint Data Historic; ACS 2024 five-year table B25001
+  year: "2021–2025 numerator; ACS 2024 five-year denominator"
+  geography: Census tract
+  higher_is: worse
+  display_format: number
+  filename: residential_burglary_rate.html
