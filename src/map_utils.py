@@ -8,6 +8,8 @@ import numpy as np
 import pandas as pd
 from folium.features import GeoJsonPopup, GeoJsonTooltip
 import json
+import os
+from dotenv import load_dotenv
 from pathlib import Path
 
 
@@ -104,18 +106,37 @@ def add_map_title(map_object, title, subtitle):
     map_object.get_root().html.add_child(folium.Element(title_html))
 
 
-def make_base_map(geodataframe, tiles="CartoDB positron"):
-    """Create a Folium basemap fitted to a GeoDataFrame's bounds."""
-    map_object = folium.Map(
-        tiles=None,
-        control_scale=True,
-        prefer_canvas=True,
-    )
-    folium.TileLayer(
-        tiles=tiles,
-        name="Basemap",
-        control=False,
-    ).add_to(map_object)
+def make_base_map(geodataframe, carto_style="light_all"):
+    """Create a Folium basemap fitted to a GeoDataFrame's bounds.
+
+    Uses CARTO raster tiles (default: Positron, "light_all"), which require an
+    API key read from CARTO_API_KEY in the project-root .env. If no key is set,
+    falls back to OpenStreetMap tiles and prints a warning.
+    """
+    # Load CARTO_API_KEY from the git-ignored .env at the project root.
+    load_dotenv(find_project_dir() / ".env")
+    carto_key = os.getenv("CARTO_API_KEY")
+
+    map_object = folium.Map(tiles=None, control_scale=True, prefer_canvas=True)
+
+    # CARTO expects the key as a ?key= query parameter on every tile URL.
+    # Note: the key is embedded in the rendered HTML, since tiles load client-side.
+    if carto_key:
+        folium.TileLayer(
+            tiles=(
+                f"https://{{s}}.basemaps.cartocdn.com/{carto_style}/"
+                f"{{z}}/{{x}}/{{y}}{{r}}.png?key={carto_key}"
+            ),
+            attr=(
+                '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> '
+                'contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+            ),
+            name="Basemap",
+            control=False,
+        ).add_to(map_object)
+    else:
+        print("WARNING: CARTO_API_KEY not set in .env; using OpenStreetMap basemap instead.")
+        folium.TileLayer(tiles="OpenStreetMap", name="Basemap", control=False).add_to(map_object)
     min_x, min_y, max_x, max_y = geodataframe.total_bounds
     map_object.fit_bounds([[min_y, min_x], [max_y, max_x]])
     return map_object
