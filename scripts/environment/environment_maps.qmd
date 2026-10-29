@@ -27,9 +27,9 @@ representative dimensions:
    shown as its native 300m grid cells rather than a tract statistic
 
 Every numeric metric is presented as a bubble layer sized by magnitude over
-selectable demographic choropleth base layers. Rodent inspections are point
-events with native building coordinates, so their bubbles plot at each
-building's own address. Street and sidewalk cleanliness are reported at the
+selectable demographic choropleth base layers. Rodent inspections are
+aggregated to a tract-level active-inspection count and plotted as one bubble
+per tract centroid. Street and sidewalk cleanliness are reported at the
 DSNY cleaning section level, not census tract, so their bubbles sit at each
 section's centroid instead. Street tree health is aggregated to tract-level
 Good/Fair/Poor counts and plotted as one donut-style bubble per tract,
@@ -77,9 +77,6 @@ CLEAN_DATA_PATH = PROJECT_DIR / "data" / "clean" / "environment_tract.csv"
 SECTIONS_DATA_PATH = PROJECT_DIR / "data" / "clean" / "environment_sections.csv"
 BASELINE_PROFILE_PATH = (
     PROJECT_DIR / "data" / "clean" / "cb3_tract_baseline_profile_clean.csv"
-)
-RODENT_INSPECTION_POINTS_PATH = (
-    PROJECT_DIR / "data" / "clean" / "environment_rodent_inspection_points.csv"
 )
 NYCHA_BUILDING_POINTS_PATH = (
     PROJECT_DIR / "data" / "clean" / "environment_nycha_building_points.csv"
@@ -168,16 +165,6 @@ tracts = tracts.merge(
     on="GEOID",
     how="left",
     validate="one_to_one",
-)
-
-# Read building-level rodent inspection points (native lat/lon, not collapsed
-# to a tract centroid) and attach tract/NTA labels for tooltips.
-rodent_insp_points = pd.read_csv(RODENT_INSPECTION_POINTS_PATH, dtype={"GEOID": "string"})
-rodent_insp_points = rodent_insp_points.merge(
-    tracts[["GEOID", "tract_label", "nta_name"]],
-    on="GEOID",
-    how="left",
-    validate="many_to_one",
 )
 
 # Read NYCHA residential building points (native lat/lon) and attach
@@ -366,16 +353,9 @@ def create_single_metric_map(metric, metric_specs=None, title=None, extra_layers
 ### Rodent inspections
 
 ```{python}
-# Rodent inspections are reported at the building level, not the tract level,
-# so bubbles use each building's own coordinates rather than a tract centroid.
-rodent_map = create_single_metric_map(
-    "rodent_active_inspections",
-    points=rodent_insp_points,
-    lat_col="latitude",
-    lon_col="longitude",
-    tooltip_fields=["address", "tract_label"],
-    tooltip_aliases=["Address", "Census tract"],
-)
+# Rodent inspections are aggregated to a tract-level active-inspection count,
+# so bubbles sit at each tract centroid rather than at individual buildings.
+rodent_map = create_single_metric_map("rodent_active_inspections")
 show_map(MAP_OUTPUT_DIR / METRIC_SPECS["rodent_active_inspections"]["filename"])
 ```
 
