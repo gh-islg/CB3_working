@@ -240,12 +240,12 @@ hpd_open_class_c:
 
 ej_area_flag:
   domain: environment
-  short_label: EJ Area (2024)
-  label: Designated Environmental Justice Area (MOCEJ 2024)
+  short_label: DAC (2024)
+  label: Designated Disadvantaged Community (DAC, MOCEJ 2024)
   description: >
     Binary flag indicating whether the census tract is designated a 2024
-    Environmental Justice Area by the Mayor's Office of Climate and Environmental
-    Justice. Designation is based on 2010 tract boundaries (GEOID10) and joined
+    Disadvantaged Community (DAC) in the Mayor's Office of Climate and
+    Environmental Justice file. Designation is based on 2010 tract boundaries (GEOID10) and joined
     to 2020 tracts via the primary contributing source tract.
   unit: ""
   palette: ["#f7f7f7", "#252525"]
