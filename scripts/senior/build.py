@@ -58,13 +58,6 @@ LOG_OUTPUT = CLEAN / "senior_build_log.txt"
 
 DEMOGRAPHIC_SOURCE_CANDIDATES = [
     CLEAN / "tract_baseline_profile_clean.csv",
-    CLEAN / "tract_baseline_profile_partial_before_crosswalk.csv",
-    CLEAN / "tract_baseline_profile_partial_before_crosswalk_clean.csv",
-    CLEAN / "cb3_tract_baseline_profile.csv",
-    CLEAN / "cb3_tract_baseline_profile_clean.csv",
-    CLEAN / "language.csv",
-    CLEAN / "economic-food.csv",
-    CLEAN / "health.csv",
 ]
 
 DEMOGRAPHIC_COLUMNS = [
@@ -280,6 +273,22 @@ def build_senior_poverty_by_race(CB3_TRACT_CODES, log_lines):
     frame = add_acs_geoid(frame)
 
     result = frame[["GEOID"]].copy()
+
+    # Overall poverty rate for people age 60+, matching the age bands used by
+    # the senior race-specific rates below (60-74, 75-84, and 85+).
+    overall_below_cols = [f"B17020_{code}E" for code in POVERTY_BELOW_CODES]
+    overall_above_cols = [f"B17020_{code}E" for code in POVERTY_ABOVE_CODES]
+    for column in [*overall_below_cols, *overall_above_cols]:
+        if column not in frame.columns:
+            frame[column] = np.nan
+            _log(log_lines, f"Warning: missing {column}; overall senior poverty set to NA.")
+    overall_below = frame[overall_below_cols].sum(axis=1, min_count=1)
+    overall_total = frame[[*overall_below_cols, *overall_above_cols]].sum(
+        axis=1, min_count=1
+    )
+    result["senior_poverty_population"] = overall_below
+    result["senior_total_poverty_universe"] = overall_total
+    result["senior_poverty_rate"] = percent(overall_below, overall_total)
 
     for race, letter in RACE_TABLE_LETTERS.items():
         below_cols = [f"B17020{letter}_{code}E" for code in POVERTY_BELOW_CODES]
