@@ -43,7 +43,7 @@ from src.map_utils import (
 DOMAIN = "education"
 
 SCHOOL_LEVEL_PATH = PROJECT_DIR / "data" / "clean" / "EDUCATION_DOMAIN_school_level_analytic_file.csv"
-BASELINE_PROFILE_PATH = PROJECT_DIR / "data" / "clean" / "cb3_tract_baseline_profile_clean.csv"
+BASELINE_PROFILE_PATH = PROJECT_DIR / "data" / "clean" / "tract_baseline_profile_clean.csv"
 CLEAN_OUTPUT_PATH = PROJECT_DIR / "data" / "clean" / "education.csv"
 METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
 MAP_OUTPUT_DIR = PROJECT_DIR / "maps" / "education"
@@ -91,8 +91,8 @@ tracts_lookup, cb3_tract_geometry, CB3_TRACT_CODES, CB3_GEOIDS = load_cb3_tract_
 # Demographic backdrop layers (income, race/ethnicity, etc.) are shared across
 # domain notebooks, matching environment_maps.qmd's pattern, so school points
 # can be read against the same selectable choropleth context as other domains.
-baseline_profile = pd.read_csv(BASELINE_PROFILE_PATH, dtype={"geoid": "string"})
-baseline_profile["GEOID"] = baseline_profile["geoid"].str.zfill(11)
+baseline_profile = pd.read_csv(BASELINE_PROFILE_PATH, dtype={"GEOID": "string"})
+baseline_profile["GEOID"] = baseline_profile["GEOID"].str.zfill(11)
 
 DEMOGRAPHIC_COLUMNS = [
     "GEOID",
