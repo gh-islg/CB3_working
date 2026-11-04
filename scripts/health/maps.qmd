@@ -177,14 +177,14 @@ DEMOGRAPHIC_COLUMNS = [
     "lep_household_share",
 ]
 
-BASELINE_PROFILE_PATH = CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv"
+BASELINE_PROFILE_PATH = CLEAN_DIR / "tract_baseline_profile_clean.csv"
 if not BASELINE_PROFILE_PATH.exists():
     raise FileNotFoundError(f"Missing shared demographic baseline: {BASELINE_PROFILE_PATH}")
 baseline_profile = pd.read_csv(
     BASELINE_PROFILE_PATH, dtype={"geoid": "string", "GEOID": "string"}
 )
 if "GEOID" not in baseline_profile.columns and "geoid" in baseline_profile.columns:
-    baseline_profile = baseline_profile.rename(columns={"geoid": "GEOID"})
+    baseline_profile = baseline_profile.rename(columns={"GEOID": "GEOID"})
 baseline_profile["GEOID"] = baseline_profile["GEOID"].astype("string").str.zfill(11)
 baseline_columns = [column for column in DEMOGRAPHIC_COLUMNS if column in baseline_profile.columns]
 

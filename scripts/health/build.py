@@ -397,7 +397,7 @@ def assemble_health_table():
         "Life expectancy remains a community-district KPI in health_cd.csv.",
         "",
         "=== Mapping context ===",
-        "Health maps join cb3_tract_baseline_profile_clean.csv in maps.qmd to add demographic context.",
+        "Health maps join tract_baseline_profile_clean.csv in maps.qmd to add demographic context.",
     ]
     LOG_OUT.write_text("\n".join(log_lines), encoding="utf-8")
 
