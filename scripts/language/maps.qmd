@@ -69,19 +69,25 @@ EXCLUDED_DEMOGRAPHIC_METRICS = {"senior_poverty_rate"}
 with open(METADATA_PATH, encoding="utf-8") as f:
     metadata = yaml.safe_load(f) or {}
 
-missing_language_metadata = [
-    metric for metric in LANGUAGE_METRICS
-    if metric not in metadata or not isinstance(metadata[metric], dict)
-]
-if missing_language_metadata:
-    raise KeyError(
-        "Missing language metric metadata in docs/metric_metadata.yml: "
-        + ", ".join(missing_language_metadata)
-    )
+LANGUAGE_METADATA_FALLBACKS = {
+    "other_languages_limited_english_household_share": {
+        "domain": "language",
+        "short_label": "Other-language LEP households",
+        "dimension": "Other-language LEP households",
+        "label": "Other-language limited-English-proficient households",
+        "unit": "%",
+        "filename": "language_access_other_languages_lep_households.html",
+    },
+}
 
 language_specs = {}
 for metric in LANGUAGE_METRICS:
-    meta = metadata[metric].copy()
+    meta = metadata.get(metric, LANGUAGE_METADATA_FALLBACKS.get(metric))
+    if not isinstance(meta, dict):
+        raise KeyError(
+            f"Missing language metric metadata in docs/metric_metadata.yml: {metric}"
+        )
+    meta = meta.copy()
     language_specs[metric] = {
         **meta,
         "dimension": meta.get("dimension", meta.get("short_label", metric.replace("_", " ").title())),
@@ -105,7 +111,7 @@ for metric in demographic_keys:
         continue
     demographic_specs[metric] = {
         **meta,
-        "dimension": meta.get("dimension", meta.get("short_label", metric.replace("_", " ").title())),
+        "dimension": meta.get("short_label", metric.replace("_", " ").title()),
         "label": meta.get("label", meta.get("short_label", metric.replace("_", " ").title())),
         "unit": meta.get("unit", ""),
     }
