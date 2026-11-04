@@ -885,18 +885,20 @@ poverty_rate:
     - "#bd0026"
 
 senior_poverty_rate:
-  domain: demographics
-  short_label: Senior poverty rate
-  label: "Residents age 65+ below poverty level"
-  description: Share of residents aged 65 or older living below the federal poverty level.
+  domain: senior
+  short_label: Senior poverty rate (age 60+)
+  dimension: Senior poverty rate (age 60+)
+  label: "Residents age 60+ below poverty level"
+  description: Share of residents aged 60 or older living below the federal poverty level.
   unit: "%"
   palette: ["#ffffcc", "#ffeda0", "#feb24c", "#f03b20", "#bd0026"]
-  source: ACS 5-year estimates, table B17001
-  year: 2023
+  source: ACS 2020-2024 5-year estimates, table B17020
+  year: 2024
   geography: Census tract
   higher_is: worse
   map_classification: quintile
   display_format: percent
+  filename: senior_poverty_overall.html
 
 lep_household_share:
   domain: demographics
