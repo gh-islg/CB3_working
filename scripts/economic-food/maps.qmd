@@ -49,7 +49,7 @@ from src.map_utils import (
 
 PROJECT_DIR = find_project_dir()
 CLEAN_PATH = PROJECT_DIR / "data" / "clean" / "economic-food.csv"
-BASELINE_PATH = PROJECT_DIR / "data" / "clean" / "cb3_tract_baseline_profile_clean.csv"
+BASELINE_PATH = PROJECT_DIR / "data" / "clean" / "tract_baseline_profile_clean.csv"
 METADATA_PATH = PROJECT_DIR / "docs" / "metric_metadata.yml"
 OUTPUT_DIR = PROJECT_DIR / "maps" / "economic-food"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

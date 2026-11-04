@@ -35,13 +35,7 @@ DRS_FILE_OPTIONS = [
     "District_Resource_Statement_(DRS)_20260420.csv",
 ]
 BASELINE_CANDIDATES = [
-    CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv",
     CLEAN_DIR / "tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk_clean.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile.csv",
-    CLEAN_DIR / "health_tract.csv",
-    CLEAN_DIR / "health.csv",
 ]
 
 
