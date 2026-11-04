@@ -22,14 +22,6 @@ LOG_OUT = CLEAN_DIR / "language_log.txt"
 
 DEMOGRAPHIC_SOURCE_CANDIDATES = [
     CLEAN_DIR / "tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk.csv",
-    CLEAN_DIR / "tract_baseline_profile_partial_before_crosswalk_clean.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile.csv",
-    CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "health_tract.csv",
-    CLEAN_DIR / "health.csv",
-    CLEAN_DIR / "baseline" / "tract_baseline_profile_clean.csv",
-    CLEAN_DIR / "baseline" / "tract_baseline_profile_partial_before_crosswalk.csv",
 ]
 
 DEMOGRAPHIC_COLUMNS = [
