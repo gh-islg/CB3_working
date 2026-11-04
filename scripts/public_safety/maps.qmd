@@ -152,8 +152,8 @@ DEMOGRAPHIC_SPECS = {
     for key, meta in ALL_METRICS.items()
     if meta.get("domain") == "demographics" and key != "senior_poverty_rate"
 }
-baseline = pd.read_csv(CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv", dtype={"geoid": "string"})
-baseline["GEOID"] = baseline["geoid"].str.zfill(11)
+baseline = pd.read_csv(CLEAN_DIR / "tract_baseline_profile_clean.csv", dtype={"GEOID": "string"})
+baseline["GEOID"] = baseline["GEOID"].str.zfill(11)
 assert set(tracts["GEOID"]) <= set(baseline["GEOID"])
 tracts = tracts.merge(baseline[["GEOID", *DEMOGRAPHIC_SPECS]], on="GEOID", how="left", validate="one_to_one")
 tracts = add_polygon_centroids(
