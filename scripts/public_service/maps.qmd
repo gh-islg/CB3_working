@@ -100,8 +100,8 @@ assert tracts["GEOID"].is_unique
 assert set(tracts["GEOID"]) == set(metrics["GEOID"])
 
 # Read tract-level demographics for the shared selectable backdrop layers.
-baseline_profile = pd.read_csv(CLEAN_DIR / "cb3_tract_baseline_profile_clean.csv", dtype={"geoid": "string"})
-baseline_profile["GEOID"] = baseline_profile["geoid"].str.zfill(11)
+baseline_profile = pd.read_csv(CLEAN_DIR / "tract_baseline_profile_clean.csv", dtype={"GEOID": "string"})
+baseline_profile["GEOID"] = baseline_profile["GEOID"].str.zfill(11)
 
 DEMOGRAPHIC_COLUMNS = [
     "GEOID",
